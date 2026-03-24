@@ -15,7 +15,6 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 SHORT_CODE_CACHE_PREFIX = "qr:short_code:"
-DEFAULT_SHORT_CODE_TTL_SECONDS = 300
 
 _redis_client: Redis | None = None
 
@@ -68,15 +67,17 @@ async def get_cached_short_code(short_code: str) -> dict[str, Any] | None:
 async def set_cached_short_code(
     short_code: str,
     payload: dict[str, Any],
-    ttl_seconds: int = DEFAULT_SHORT_CODE_TTL_SECONDS,
+    ttl_seconds: int | None = None,
 ) -> bool:
     """Cache QR payload for a short code with a TTL."""
 
     cache_key = short_code_cache_key(short_code)
+    settings = get_settings()
+    resolved_ttl = ttl_seconds or settings.redis_short_code_ttl_seconds
 
     try:
         raw_payload = json.dumps(payload)
-        await get_redis_client().set(cache_key, raw_payload, ex=ttl_seconds)
+        await get_redis_client().set(cache_key, raw_payload, ex=resolved_ttl)
         return True
     except (RedisError, TypeError, ValueError):
         logger.exception("Redis set failed for short code '%s'", short_code)

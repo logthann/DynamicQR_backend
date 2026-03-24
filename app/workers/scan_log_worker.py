@@ -26,16 +26,21 @@ async def process_next_scan_log_message(
     queue_client: QueueClient | None = None,
     session_factory: async_sessionmaker[AsyncSession] | Callable[[], Any] | None = None,
     queue_name: str | None = None,
-    timeout_seconds: int = 1,
-    max_retry_attempts: int = DEFAULT_MAX_RETRY_ATTEMPTS,
+    timeout_seconds: int | None = None,
+    max_retry_attempts: int | None = None,
 ) -> bool:
     """Consume one scan-log message, persist it, then ack or dead-letter."""
 
     client = queue_client or get_queue_client()
     factory = session_factory or get_session_factory()
-    source_queue = queue_name or get_settings().scan_log_queue_name
+    settings = get_settings()
+    source_queue = queue_name or settings.scan_log_queue_name
+    resolved_timeout = timeout_seconds if timeout_seconds is not None else settings.queue_visibility_timeout_seconds
+    resolved_max_retries = (
+        max_retry_attempts if max_retry_attempts is not None else settings.queue_max_retry_attempts
+    )
 
-    message = await client.dequeue(source_queue, timeout_seconds=timeout_seconds)
+    message = await client.dequeue(source_queue, timeout_seconds=resolved_timeout)
     if message is None:
         return False
 
@@ -52,7 +57,7 @@ async def process_next_scan_log_message(
     except Exception as exc:
         logger.exception("Failed to persist scan log message '%s'", message.envelope.id)
         current_attempt = _get_retry_attempt(message.envelope.payload)
-        if current_attempt < max_retry_attempts:
+        if current_attempt < resolved_max_retries:
             await client.enqueue(
                 source_queue,
                 _with_retry_attempt(message.envelope.payload, current_attempt + 1),

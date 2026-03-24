@@ -25,7 +25,16 @@ async def get_qr_code_repository(
 @router.get(
     "/q/{short_code}",
     summary="Resolve QR short code and redirect",
+    description=(
+        "Resolve an active short code to its destination, enrich with UTM parameters, "
+        "and return an HTTP 302 redirect."
+    ),
     status_code=status.HTTP_302_FOUND,
+    responses={
+        302: {"description": "Redirect to resolved destination URL."},
+        404: {"description": "Short code is not found."},
+        410: {"description": "Short code is inactive or soft-deleted."},
+    },
 )
 async def redirect_by_short_code(
     short_code: str,

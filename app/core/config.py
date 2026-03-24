@@ -14,6 +14,9 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="local", alias="APP_ENV")
     database_url: str = Field(alias="DATABASE_URL")
+    db_pool_size: int = Field(default=20, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=40, alias="DB_MAX_OVERFLOW")
+    db_pool_timeout_seconds: int = Field(default=30, alias="DB_POOL_TIMEOUT_SECONDS")
 
     jwt_secret: str = Field(alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
@@ -24,6 +27,10 @@ class Settings(BaseSettings):
     oauth_token_encryption_key: str = Field(alias="OAUTH_TOKEN_ENCRYPTION_KEY")
 
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
+    redis_short_code_ttl_seconds: int = Field(
+        default=300,
+        alias="REDIS_SHORT_CODE_TTL_SECONDS",
+    )
 
     google_analytics_measurement_id: Optional[str] = Field(
         default=None,
@@ -50,6 +57,11 @@ class Settings(BaseSettings):
     scan_log_queue_name: str = Field(
         default="scan_logs",
         alias="SCAN_LOG_QUEUE_NAME",
+    )
+    queue_max_retry_attempts: int = Field(default=5, alias="QUEUE_MAX_RETRY_ATTEMPTS")
+    queue_visibility_timeout_seconds: int = Field(
+        default=30,
+        alias="QUEUE_VISIBILITY_TIMEOUT_SECONDS",
     )
 
     analytics_cron_interval_minutes: int = Field(

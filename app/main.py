@@ -2,6 +2,11 @@
 
 from fastapi import APIRouter, FastAPI
 
+from app.api.v1.analytics import router as analytics_router
+from app.api.v1.auth import router as auth_router
+from app.api.v1.campaigns import router as campaigns_router
+from app.api.v1.integrations import router as integrations_router
+from app.api.v1.qr_codes import router as qr_codes_router
 from app.api.v1.redirect import router as redirect_router
 
 
@@ -23,6 +28,11 @@ def create_application() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(api_v1_router)
+    app.include_router(analytics_router)
+    app.include_router(auth_router)
+    app.include_router(campaigns_router)
+    app.include_router(integrations_router)
+    app.include_router(qr_codes_router)
     app.include_router(redirect_router)
     return app
 

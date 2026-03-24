@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 
 from app.core.config import get_settings
+from app.workers.analytics_aggregator import run_daily_reconciliation, run_incremental_aggregation
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +145,18 @@ class SchedulerBootstrap:
             logger.exception("Scheduled job '%s' failed", job.name)
 
 
-async def _noop_aggregation_job() -> None:
-    """Default placeholder callback for scheduler bootstrap before job wiring."""
+async def _incremental_aggregation_job() -> None:
+    """Execute near-real-time summary aggregation over the recent scan window."""
 
-    logger.debug("No-op aggregation callback executed")
+    upserted = await run_incremental_aggregation()
+    logger.debug("Incremental analytics aggregation upserted %d rows", upserted)
+
+
+async def _daily_reconciliation_job() -> None:
+    """Execute daily reconciliation aggregation for full-day correctness."""
+
+    upserted = await run_daily_reconciliation()
+    logger.debug("Daily analytics reconciliation upserted %d rows", upserted)
 
 
 def bootstrap_scheduler() -> SchedulerBootstrap:
@@ -159,12 +168,12 @@ def bootstrap_scheduler() -> SchedulerBootstrap:
     scheduler.add_interval_job(
         name="analytics_5min_aggregation",
         interval_seconds=float(settings.analytics_cron_interval_minutes * 60),
-        callback=_noop_aggregation_job,
+        callback=_incremental_aggregation_job,
     )
     scheduler.add_daily_job(
         name="analytics_daily_reconciliation",
         at_utc=time(hour=0, minute=5, tzinfo=UTC),
-        callback=_noop_aggregation_job,
+        callback=_daily_reconciliation_job,
     )
 
     return scheduler
