@@ -1,0 +1,27 @@
+# Core API framework
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+
+# Validation and settings
+pydantic>=2.10,<3.0
+pydantic-settings>=2.6,<3.0
+
+# Database and migrations
+sqlalchemy>=2.0,<3.0
+alembic>=1.14,<2.0
+asyncmy>=0.2,<1.0
+mysql-connector-python>=9.1,<10.0
+
+# Security
+PyJWT>=2.10,<3.0
+bcrypt>=4.2,<5.0
+cryptography>=44.0,<46.0
+
+# Integrations and caching
+httpx>=0.28,<1.0
+redis>=5.2,<6.0
+
+# OAuth helpers and environment loading
+authlib>=1.4,<2.0
+python-dotenv>=1.0,<2.0
+
