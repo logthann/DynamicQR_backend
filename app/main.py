@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, FastAPI
 
+from app.api.v1.redirect import router as redirect_router
+
 
 def create_application() -> FastAPI:
     """Build and configure the FastAPI application instance."""
@@ -21,6 +23,7 @@ def create_application() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(api_v1_router)
+    app.include_router(redirect_router)
     return app
 
 

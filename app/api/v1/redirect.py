@@ -1,0 +1,57 @@
+"""Public redirect endpoint for dynamic QR short codes."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_db_session
+from app.repositories.qr_codes import QRCodeRepository
+from app.schemas.redirect import QRCodeStatus
+from app.services.redirect_service import build_redirect_url
+
+router = APIRouter(tags=["redirect"])
+
+
+async def get_qr_code_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> QRCodeRepository:
+    """Provide QR repository dependency for redirect flows."""
+
+    return QRCodeRepository(session)
+
+
+@router.get(
+    "/q/{short_code}",
+    summary="Resolve QR short code and redirect",
+    status_code=status.HTTP_302_FOUND,
+)
+async def redirect_by_short_code(
+    short_code: str,
+    repository: QRCodeRepository = Depends(get_qr_code_repository),
+) -> RedirectResponse:
+    """Return an HTTP 302 redirect for a known short code."""
+
+    qr_code = await repository.resolve_by_short_code(short_code)
+    if qr_code is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="QR code not found",
+        )
+
+    if qr_code.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="QR code has been deleted",
+        )
+
+    if qr_code.status is not QRCodeStatus.active:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="QR code is inactive",
+        )
+
+    redirect_url = build_redirect_url(qr_code)
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
