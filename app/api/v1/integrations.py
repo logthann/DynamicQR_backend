@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.campaigns import get_current_principal
@@ -10,12 +10,22 @@ from app.core.rbac import Principal
 from app.db.session import get_db_session
 from app.repositories.user_integrations import UserIntegrationRepository
 from app.schemas.integrations import (
+    CalendarImportCampaignsRequest,
+    CalendarImportCampaignsResponse,
+    CalendarRangeType,
+    GoogleCalendarEventListResponse,
     IntegrationConnectionStatus,
     IntegrationProvider,
     OAuthCallbackRequest,
     OAuthConnectRequest,
     OAuthConnectResponse,
 )
+from app.repositories.campaigns import CampaignRepository
+from app.services.campaign_calendar_sync_service import (
+    CampaignCalendarSyncService,
+    CampaignCalendarSyncServiceError,
+)
+from app.services.google_calendar_service import GoogleCalendarService, GoogleCalendarServiceError
 from app.services.integration_service import IntegrationService, IntegrationServiceError
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["integrations"])
@@ -27,6 +37,25 @@ async def get_integration_service(
     """Provide integration service dependency."""
 
     return IntegrationService(UserIntegrationRepository(session))
+
+
+async def get_google_calendar_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> GoogleCalendarService:
+    """Provide Google Calendar service dependency."""
+
+    return GoogleCalendarService(session, UserIntegrationRepository(session))
+
+
+async def get_campaign_calendar_sync_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> CampaignCalendarSyncService:
+    """Provide campaign calendar sync service dependency."""
+
+    return CampaignCalendarSyncService(
+        CampaignRepository(session),
+        GoogleCalendarService(session, UserIntegrationRepository(session)),
+    )
 
 
 @router.get(
@@ -43,6 +72,53 @@ async def list_integrations(
     """List connected providers for the current principal."""
 
     return await service.list_connection_statuses(principal)
+
+
+@router.get(
+    "/google-calendar/events",
+    response_model=GoogleCalendarEventListResponse,
+    summary="List Google Calendar events",
+    description="List Google Calendar events for a selected month or year and include campaign sync status metadata.",
+    response_description="Calendar event candidates enriched with local campaign linkage status.",
+)
+async def list_google_calendar_events(
+    range_type: CalendarRangeType = Query(default=CalendarRangeType.month),
+    year: int = Query(ge=1970, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    principal: Principal = Depends(get_current_principal),
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
+) -> GoogleCalendarEventListResponse:
+    """Return Google Calendar event list for month/year windows for the current user."""
+
+    try:
+        return await service.list_events_by_period(
+            user_id=principal.user_id,
+            range_type=range_type,
+            year=year,
+            month=month,
+        )
+    except GoogleCalendarServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/google-calendar/import-campaigns",
+    response_model=CalendarImportCampaignsResponse,
+    summary="Import selected events as campaigns",
+    description="Import selected Google Calendar events from a month/year window into campaigns with idempotent linkage by google_event_id.",
+    response_description="Import summary including created/updated/skipped counts.",
+)
+async def import_google_calendar_events_as_campaigns(
+    payload: CalendarImportCampaignsRequest,
+    principal: Principal = Depends(get_current_principal),
+    service: CampaignCalendarSyncService = Depends(get_campaign_calendar_sync_service),
+) -> CalendarImportCampaignsResponse:
+    """Create or update campaigns from selected Google Calendar event ids."""
+
+    try:
+        return await service.import_selected_events(principal, payload)
+    except (CampaignCalendarSyncServiceError, GoogleCalendarServiceError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post(

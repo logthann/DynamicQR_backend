@@ -9,9 +9,18 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 
 from app.api.v1.campaigns import get_current_principal
-from app.api.v1.integrations import get_integration_service
+from app.api.v1.integrations import (
+    get_campaign_calendar_sync_service,
+    get_google_calendar_service,
+    get_integration_service,
+)
 from app.core.rbac import Principal
+from app.schemas.campaign import CampaignRead
 from app.schemas.integrations import (
+    CalendarImportCampaignsResponse,
+    CalendarRangeType,
+    GoogleCalendarEventListItem,
+    GoogleCalendarEventListResponse,
     IntegrationConnectionStatus,
     IntegrationProvider,
     OAuthConnectResponse,
@@ -54,6 +63,56 @@ class _StubIntegrationService:
 
     async def revoke_provider_connection(self, principal: Principal, provider_name: IntegrationProvider):
         return provider_name == IntegrationProvider.google_calendar
+
+
+class _StubGoogleCalendarService:
+    async def list_events_by_period(self, *, user_id: int, range_type: CalendarRangeType, year: int, month: int | None):
+        return GoogleCalendarEventListResponse(
+            range_type=range_type,
+            year=year,
+            month=month,
+            total=1,
+            events=[
+                GoogleCalendarEventListItem(
+                    google_event_id="evt-123",
+                    title="Calendar Imported Event",
+                    starts_at=datetime.now(UTC),
+                    ends_at=datetime.now(UTC),
+                    event_status="confirmed",
+                    linked_campaign_id=10,
+                    calendar_sync_status="synced",
+                    last_synced_at=datetime.now(UTC),
+                )
+            ],
+        )
+
+
+class _StubCampaignCalendarSyncService:
+    async def import_selected_events(self, principal: Principal, payload):
+        now = datetime.now(UTC)
+        return CalendarImportCampaignsResponse(
+            created_count=1,
+            updated_count=0,
+            skipped_count=0,
+            campaigns=[
+                CampaignRead(
+                    id=101,
+                    user_id=principal.user_id,
+                    name="Imported Campaign",
+                    description="Imported from Google Calendar",
+                    start_date=None,
+                    end_date=None,
+                    status="active",
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                    google_event_id="evt-123",
+                    calendar_sync_status="synced",
+                    calendar_last_synced_at=now,
+                    calendar_sync_hash="hash",
+                )
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -129,4 +188,47 @@ async def test_revoke_provider_returns_404_when_not_connected(app: FastAPI, asyn
         app.dependency_overrides.clear()
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_google_calendar_events_returns_candidates(app: FastAPI, async_client: AsyncClient) -> None:
+    app.dependency_overrides[get_google_calendar_service] = lambda: _StubGoogleCalendarService()
+    app.dependency_overrides[get_current_principal] = lambda: Principal(user_id=42, role="user")
+
+    try:
+        response = await async_client.get(
+            "/api/v1/integrations/google-calendar/events?range_type=month&year=2026&month=11"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["events"][0]["google_event_id"] == "evt-123"
+
+
+@pytest.mark.asyncio
+async def test_import_google_calendar_events_creates_campaigns(app: FastAPI, async_client: AsyncClient) -> None:
+    app.dependency_overrides[get_campaign_calendar_sync_service] = lambda: _StubCampaignCalendarSyncService()
+    app.dependency_overrides[get_current_principal] = lambda: Principal(user_id=42, role="user")
+
+    try:
+        response = await async_client.post(
+            "/api/v1/integrations/google-calendar/import-campaigns",
+            json={
+                "range_type": "month",
+                "year": 2026,
+                "month": 11,
+                "event_ids": ["evt-123"],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_count"] == 1
+    assert payload["campaigns"][0]["google_event_id"] == "evt-123"
+
 

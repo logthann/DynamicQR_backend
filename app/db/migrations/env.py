@@ -6,6 +6,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import make_url
 
 from app.core.config import get_settings
 from app.db.base import Base
@@ -24,12 +25,19 @@ def _resolve_database_url() -> str:
     """Resolve database URL from app settings or Alembic config fallback."""
 
     try:
-        return get_settings().database_url
+        raw_url = get_settings().database_url
     except Exception:
         configured_url = config.get_main_option("sqlalchemy.url")
         if not configured_url:
             raise
-        return configured_url
+        raw_url = configured_url
+
+    # Alembic's online path here is synchronous. If the app URL is async,
+    # swap to a sync MySQL driver so migrations can connect normally.
+    url = make_url(raw_url)
+    if url.drivername == "mysql+asyncmy":
+        url = url.set(drivername="mysql+mysqlconnector")
+    return url.render_as_string(hide_password=False)
 
 
 def run_migrations_offline() -> None:
@@ -76,4 +84,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-

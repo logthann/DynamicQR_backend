@@ -8,9 +8,13 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 
-from app.api.v1.campaigns import get_campaign_service, get_current_principal
+from app.api.v1.campaigns import (
+    get_campaign_calendar_sync_service,
+    get_campaign_service,
+    get_current_principal,
+)
 from app.core.rbac import Principal
-from app.schemas.campaign import CampaignRead
+from app.schemas.campaign import CampaignCalendarSyncStatus, CampaignRead
 
 
 class _StubCampaignService:
@@ -51,6 +55,30 @@ class _StubCampaignService:
         return campaign_id == 1
 
 
+class _StubCampaignCalendarSyncService:
+    async def sync_campaign_to_calendar(self, *, user_id: int, campaign: CampaignRead) -> CampaignRead:
+        now = datetime.now(UTC)
+        return campaign.model_copy(
+            update={
+                "google_event_id": "evt-321",
+                "calendar_sync_status": CampaignCalendarSyncStatus.synced,
+                "calendar_last_synced_at": now,
+                "calendar_sync_hash": "hash-sync",
+            }
+        )
+
+    async def remove_campaign_from_calendar(self, *, user_id: int, campaign: CampaignRead) -> CampaignRead:
+        now = datetime.now(UTC)
+        return campaign.model_copy(
+            update={
+                "google_event_id": None,
+                "calendar_sync_status": CampaignCalendarSyncStatus.removed,
+                "calendar_last_synced_at": now,
+                "calendar_sync_hash": None,
+            }
+        )
+
+
 @pytest.mark.asyncio
 async def test_list_campaigns_returns_items(app: FastAPI, async_client: AsyncClient) -> None:
     app.dependency_overrides[get_campaign_service] = lambda: _StubCampaignService()
@@ -62,7 +90,10 @@ async def test_list_campaigns_returns_items(app: FastAPI, async_client: AsyncCli
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert len(response.json()) == 1
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["calendar_sync_status"] == "not_linked"
+    assert "google_event_id" in payload[0]
 
 
 @pytest.mark.asyncio
@@ -142,5 +173,39 @@ async def test_admin_can_request_deleted_campaigns(app: FastAPI, async_client: A
 
     assert response.status_code == 200
     assert stub.last_include_deleted_list is True
+
+
+@pytest.mark.asyncio
+async def test_sync_campaign_to_calendar_returns_updated_campaign(app: FastAPI, async_client: AsyncClient) -> None:
+    app.dependency_overrides[get_campaign_service] = lambda: _StubCampaignService()
+    app.dependency_overrides[get_campaign_calendar_sync_service] = lambda: _StubCampaignCalendarSyncService()
+    app.dependency_overrides[get_current_principal] = lambda: Principal(user_id=7, role="user")
+
+    try:
+        response = await async_client.post("/api/v1/campaigns/1/calendar/sync")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["google_event_id"] == "evt-321"
+    assert payload["calendar_sync_status"] == "synced"
+
+
+@pytest.mark.asyncio
+async def test_remove_campaign_calendar_link_returns_removed_status(app: FastAPI, async_client: AsyncClient) -> None:
+    app.dependency_overrides[get_campaign_service] = lambda: _StubCampaignService()
+    app.dependency_overrides[get_campaign_calendar_sync_service] = lambda: _StubCampaignCalendarSyncService()
+    app.dependency_overrides[get_current_principal] = lambda: Principal(user_id=7, role="user")
+
+    try:
+        response = await async_client.delete("/api/v1/campaigns/1/calendar/link")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["calendar_sync_status"] == "removed"
+    assert payload["google_event_id"] is None
 
 

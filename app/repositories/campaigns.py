@@ -35,6 +35,10 @@ class CampaignRepository:
                 start_date,
                 end_date,
                 status,
+                google_event_id,
+                calendar_sync_status,
+                calendar_last_synced_at,
+                calendar_sync_hash,
                 created_at,
                 updated_at,
                 deleted_at
@@ -70,6 +74,10 @@ class CampaignRepository:
                 start_date,
                 end_date,
                 status,
+                google_event_id,
+                calendar_sync_status,
+                calendar_last_synced_at,
+                calendar_sync_hash,
                 created_at,
                 updated_at,
                 deleted_at
@@ -90,6 +98,51 @@ class CampaignRepository:
             },
         )
         return [CampaignRead.model_validate(dict(row)) for row in result.mappings().all()]
+
+    async def get_by_user_and_google_event_id(
+        self,
+        user_id: int,
+        google_event_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> CampaignRead | None:
+        """Fetch one campaign by owner and linked Google event id."""
+
+        deleted_filter = "" if include_deleted else "AND deleted_at IS NULL"
+        statement = text(
+            f"""
+            SELECT
+                id,
+                user_id,
+                name,
+                description,
+                start_date,
+                end_date,
+                status,
+                google_event_id,
+                calendar_sync_status,
+                calendar_last_synced_at,
+                calendar_sync_hash,
+                created_at,
+                updated_at,
+                deleted_at
+            FROM campaigns
+            WHERE user_id = :user_id
+              AND google_event_id = :google_event_id
+              {deleted_filter}
+            LIMIT 1
+            """
+        )
+
+        result = await self.session.execute(
+            statement,
+            {
+                "user_id": user_id,
+                "google_event_id": google_event_id,
+            },
+        )
+        row = result.mappings().first()
+        return CampaignRead.model_validate(dict(row)) if row else None
 
     async def create(self, user_id: int, payload: CampaignCreate) -> CampaignRead:
         """Insert a new campaign row and return the created campaign."""
@@ -145,7 +198,7 @@ class CampaignRepository:
     ) -> CampaignRead | None:
         """Apply partial updates to one active campaign and return updated row."""
 
-        data = payload.model_dump(exclude_none=True)
+        data = payload.model_dump(exclude_unset=True)
         if not data:
             return await self.get_by_id(campaign_id)
 

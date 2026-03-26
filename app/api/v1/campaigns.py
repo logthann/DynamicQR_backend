@@ -9,7 +9,13 @@ from app.core.rbac import Principal, RBACError
 from app.db.session import get_db_session
 from app.repositories.campaigns import CampaignRepository
 from app.schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
+from app.services.campaign_calendar_sync_service import (
+    CampaignCalendarSyncService,
+    CampaignCalendarSyncServiceError,
+)
 from app.services.campaign_service import CampaignService
+from app.services.google_calendar_service import GoogleCalendarService, GoogleCalendarServiceError
+from app.repositories.user_integrations import UserIntegrationRepository
 
 router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
 
@@ -49,6 +55,17 @@ async def get_campaign_service(
     """Provide campaign service dependency."""
 
     return CampaignService(CampaignRepository(session))
+
+
+async def get_campaign_calendar_sync_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> CampaignCalendarSyncService:
+    """Provide campaign calendar sync service dependency."""
+
+    return CampaignCalendarSyncService(
+        CampaignRepository(session),
+        GoogleCalendarService(session, UserIntegrationRepository(session)),
+    )
 
 
 @router.get(
@@ -190,4 +207,66 @@ async def delete_campaign(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{campaign_id}/calendar/sync",
+    response_model=CampaignRead,
+    summary="Sync campaign to Google Calendar",
+    description="Create or update linked Google Calendar event for one campaign and persist sync metadata.",
+    response_description="Campaign with refreshed calendar sync fields.",
+)
+async def sync_campaign_to_calendar(
+    campaign_id: int,
+    principal: Principal = Depends(get_current_principal),
+    campaign_service: CampaignService = Depends(get_campaign_service),
+    sync_service: CampaignCalendarSyncService = Depends(get_campaign_calendar_sync_service),
+) -> CampaignRead:
+    """Push one campaign to Google Calendar and update sync metadata."""
+
+    try:
+        campaign = await campaign_service.get_campaign(principal, campaign_id)
+    except RBACError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    if campaign is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    try:
+        return await sync_service.sync_campaign_to_calendar(user_id=principal.user_id, campaign=campaign)
+    except (CampaignCalendarSyncServiceError, GoogleCalendarServiceError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/{campaign_id}/calendar/link",
+    response_model=CampaignRead,
+    summary="Remove campaign from Google Calendar",
+    description="Delete linked Google Calendar event and mark local campaign calendar status as removed.",
+    response_description="Campaign with cleared calendar link metadata.",
+)
+async def remove_campaign_calendar_link(
+    campaign_id: int,
+    principal: Principal = Depends(get_current_principal),
+    campaign_service: CampaignService = Depends(get_campaign_service),
+    sync_service: CampaignCalendarSyncService = Depends(get_campaign_calendar_sync_service),
+) -> CampaignRead:
+    """Unlink one campaign from Google Calendar by deleting the remote event."""
+
+    try:
+        campaign = await campaign_service.get_campaign(principal, campaign_id)
+    except RBACError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    if campaign is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    try:
+        return await sync_service.remove_campaign_from_calendar(
+            user_id=principal.user_id,
+            campaign=campaign,
+        )
+    except (CampaignCalendarSyncServiceError, GoogleCalendarServiceError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
 

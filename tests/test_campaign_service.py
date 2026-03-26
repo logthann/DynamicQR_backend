@@ -91,3 +91,26 @@ async def test_update_campaign_checks_scope_before_update() -> None:
     assert result is not None
     repository.update.assert_awaited_once_with(1, CampaignUpdate(name="Updated"))
 
+
+@pytest.mark.asyncio
+async def test_update_campaign_allows_calendar_reconciliation_fields() -> None:
+    repository = AsyncMock()
+    repository.get_by_id.return_value = _campaign_read(user_id=7)
+    repository.update.return_value = _campaign_read(user_id=7)
+
+    service = CampaignService(repository)
+    payload = CampaignUpdate(
+        calendar_sync_status="out_of_sync",
+        calendar_sync_hash="hash-123",
+    )
+
+    result = await service.update_campaign(
+        Principal(user_id=7, role="user"),
+        campaign_id=1,
+        payload=payload,
+    )
+
+    assert result is not None
+    repository.update.assert_awaited_once_with(1, payload)
+
+
