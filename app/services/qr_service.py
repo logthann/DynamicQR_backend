@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from app.core.rbac import Principal, ensure_scope_access
+from app.core.rbac import Principal, RBACError, ensure_scope_access
 from app.repositories.qr_codes import QRCodeRepository
 from app.schemas.qr_code import QRCodeCreate, QRCodeRead, QRCodeStatus, QRCodeUpdate, QRType
 from app.services.short_code_service import ExistsChecker, generate_unique_base62_code
@@ -52,6 +52,9 @@ class QRService:
                 owner_user_id=target_owner,
                 owner_company_name=resolved_company_name,
             )
+
+        if payload.campaign_id is not None:
+            await self._ensure_campaign_in_owner_scope(target_owner, payload.campaign_id)
 
         short_code = await self.short_code_generator(self._short_code_exists)
         created = await self.repository.create(target_owner, short_code, payload)
@@ -105,6 +108,10 @@ class QRService:
             owner_user_id=owner_user_id,
             owner_company_name=resolved_company_name,
         )
+
+        if campaign_id is not None:
+            await self._ensure_campaign_in_owner_scope(owner_user_id, campaign_id)
+
         return await self.repository.list_by_user(
             owner_user_id,
             campaign_id=campaign_id,
@@ -194,4 +201,11 @@ class QRService:
             return None
 
         return await self.company_name_resolver(owner_user_id)
+
+    async def _ensure_campaign_in_owner_scope(self, owner_user_id: int, campaign_id: int) -> None:
+        """Fail with RBAC error when a campaign filter does not belong to the requested owner."""
+
+        campaign_owner_user_id = await self.repository.get_campaign_owner_user_id(campaign_id)
+        if campaign_owner_user_id is None or campaign_owner_user_id != owner_user_id:
+            raise RBACError("Campaign is outside principal scope")
 

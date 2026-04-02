@@ -43,7 +43,11 @@ class _StubIntegrationService:
             provider_name=payload.provider_name,
             authorization_url="https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
             state=payload.state or "state-token",
+            redirect_uri=str(payload.redirect_uri or "http://localhost:3000/integrations/google/callback"),
         )
+
+    def parse_oauth_state(self, state: str):
+        return IntegrationProvider.google_calendar, 42
 
     async def handle_callback(self, principal: Principal, payload):
         return IntegrationConnectionStatus(
@@ -66,11 +70,22 @@ class _StubIntegrationService:
 
 
 class _StubGoogleCalendarService:
-    async def list_events_by_period(self, *, user_id: int, range_type: CalendarRangeType, year: int, month: int | None):
+    async def list_events_by_period(
+        self,
+        *,
+        user_id: int,
+        range_type: CalendarRangeType,
+        year: int,
+        month: int | None,
+        from_month: int | None,
+        to_month: int | None,
+    ):
         return GoogleCalendarEventListResponse(
             range_type=range_type,
             year=year,
             month=month,
+            from_month=from_month,
+            to_month=to_month,
             total=1,
             events=[
                 GoogleCalendarEventListItem(
@@ -144,6 +159,7 @@ async def test_connect_provider_returns_authorization_url(app: FastAPI, async_cl
 
     assert response.status_code == 200
     assert "authorization_url" in response.json()
+    assert "redirect_uri" in response.json()
 
 
 @pytest.mark.asyncio
@@ -161,6 +177,21 @@ async def test_callback_returns_connected_status(app: FastAPI, async_client: Asy
 
     assert response.status_code == 200
     assert response.json()["connected"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_callback_returns_connected_status(app: FastAPI, async_client: AsyncClient) -> None:
+    app.dependency_overrides[get_integration_service] = lambda: _StubIntegrationService()
+
+    try:
+        response = await async_client.get(
+            "/api/v1/integrations/callback?state=google_calendar:42:test-state&code=test-auth-code"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["provider_name"] == "google_calendar"
 
 
 @pytest.mark.asyncio
@@ -206,6 +237,25 @@ async def test_list_google_calendar_events_returns_candidates(app: FastAPI, asyn
     payload = response.json()
     assert payload["total"] == 1
     assert payload["events"][0]["google_event_id"] == "evt-123"
+
+
+@pytest.mark.asyncio
+async def test_list_google_calendar_events_supports_month_range(app: FastAPI, async_client: AsyncClient) -> None:
+    app.dependency_overrides[get_google_calendar_service] = lambda: _StubGoogleCalendarService()
+    app.dependency_overrides[get_current_principal] = lambda: Principal(user_id=42, role="user")
+
+    try:
+        response = await async_client.get(
+            "/api/v1/integrations/google-calendar/events?range_type=month&year=2026&from_month=3&to_month=5"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["month"] is None
+    assert payload["from_month"] == 3
+    assert payload["to_month"] == 5
 
 
 @pytest.mark.asyncio

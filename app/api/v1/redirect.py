@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,8 +12,11 @@ from app.db.session import get_db_session
 from app.repositories.qr_codes import QRCodeRepository
 from app.schemas.redirect import QRCodeStatus
 from app.services.redirect_service import build_redirect_url
+from app.services.scan_enqueue_service import enqueue_scan_log
+from app.services.scan_metadata_service import extract_scan_metadata
 
 router = APIRouter(tags=["redirect"])
+logger = logging.getLogger(__name__)
 
 
 async def get_qr_code_repository(
@@ -37,6 +42,7 @@ async def get_qr_code_repository(
     },
 )
 async def redirect_by_short_code(
+    request: Request,
     short_code: str,
     repository: QRCodeRepository = Depends(get_qr_code_repository),
 ) -> RedirectResponse:
@@ -60,6 +66,13 @@ async def redirect_by_short_code(
             status_code=status.HTTP_410_GONE,
             detail="QR code is inactive",
         )
+
+    scan_metadata = extract_scan_metadata(request)
+    try:
+        await enqueue_scan_log(qr_id=qr_code.id, scan_metadata=scan_metadata)
+    except RuntimeError:
+        # Keep redirect UX resilient, but log enqueue failures for ops visibility.
+        logger.exception("Failed to enqueue scan log for qr_id=%s", qr_code.id)
 
     redirect_url = build_redirect_url(qr_code)
     return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)

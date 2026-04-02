@@ -17,6 +17,23 @@ logger = logging.getLogger(__name__)
 SHORT_CODE_CACHE_PREFIX = "qr:short_code:"
 
 _redis_client: Redis | None = None
+_redis_error_logged = False
+
+
+def _cache_enabled() -> bool:
+    return bool(get_settings().redis_enabled)
+
+
+def _log_redis_unavailable_once(operation: str, short_code: str) -> None:
+    global _redis_error_logged
+    if _redis_error_logged:
+        return
+    logger.warning(
+        "Redis %s failed for short code '%s'. Cache disabled for this process until restart.",
+        operation,
+        short_code,
+    )
+    _redis_error_logged = True
 
 
 def short_code_cache_key(short_code: str) -> str:
@@ -44,12 +61,15 @@ def get_redis_client() -> Redis:
 async def get_cached_short_code(short_code: str) -> dict[str, Any] | None:
     """Fetch cached QR payload for a short code."""
 
+    if not _cache_enabled():
+        return None
+
     cache_key = short_code_cache_key(short_code)
 
     try:
         payload = await get_redis_client().get(cache_key)
     except RedisError:
-        logger.exception("Redis get failed for short code '%s'", short_code)
+        _log_redis_unavailable_once("get", short_code)
         return None
 
     if not payload:
@@ -71,6 +91,9 @@ async def set_cached_short_code(
 ) -> bool:
     """Cache QR payload for a short code with a TTL."""
 
+    if not _cache_enabled():
+        return False
+
     cache_key = short_code_cache_key(short_code)
     settings = get_settings()
     resolved_ttl = ttl_seconds or settings.redis_short_code_ttl_seconds
@@ -80,19 +103,22 @@ async def set_cached_short_code(
         await get_redis_client().set(cache_key, raw_payload, ex=resolved_ttl)
         return True
     except (RedisError, TypeError, ValueError):
-        logger.exception("Redis set failed for short code '%s'", short_code)
+        _log_redis_unavailable_once("set", short_code)
         return False
 
 
 async def invalidate_short_code_cache(short_code: str) -> None:
     """Remove a short-code cache entry when destination data changes."""
 
+    if not _cache_enabled():
+        return
+
     cache_key = short_code_cache_key(short_code)
 
     try:
         await get_redis_client().delete(cache_key)
     except RedisError:
-        logger.exception("Redis delete failed for short code '%s'", short_code)
+        _log_redis_unavailable_once("delete", short_code)
 
 
 async def close_redis_client() -> None:

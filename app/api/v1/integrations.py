@@ -59,6 +59,10 @@ async def get_campaign_calendar_sync_service(
 
 
 @router.get(
+    "",
+    include_in_schema=False,
+)
+@router.get(
     "/",
     response_model=list[IntegrationConnectionStatus],
     summary="List integrations",
@@ -78,13 +82,15 @@ async def list_integrations(
     "/google-calendar/events",
     response_model=GoogleCalendarEventListResponse,
     summary="List Google Calendar events",
-    description="List Google Calendar events for a selected month or year and include campaign sync status metadata.",
+    description="List Google Calendar events for a selected month, month range, or year and include campaign sync status metadata.",
     response_description="Calendar event candidates enriched with local campaign linkage status.",
 )
 async def list_google_calendar_events(
     range_type: CalendarRangeType = Query(default=CalendarRangeType.month),
     year: int = Query(ge=1970, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
+    from_month: int | None = Query(default=None, ge=1, le=12),
+    to_month: int | None = Query(default=None, ge=1, le=12),
     principal: Principal = Depends(get_current_principal),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> GoogleCalendarEventListResponse:
@@ -96,6 +102,8 @@ async def list_google_calendar_events(
             range_type=range_type,
             year=year,
             month=month,
+            from_month=from_month,
+            to_month=to_month,
         )
     except GoogleCalendarServiceError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -156,6 +164,48 @@ async def callback_provider(
     """Exchange OAuth code and persist encrypted provider credentials."""
 
     try:
+        return await service.handle_callback(principal, payload)
+    except IntegrationServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get(
+    "/callback",
+    response_model=IntegrationConnectionStatus,
+    summary="Handle OAuth callback (direct redirect)",
+    description=(
+        "Handle provider direct GET redirect callback and exchange authorization code "
+        "without requiring app JWT in this redirect leg."
+    ),
+    response_description="Updated provider connection status.",
+)
+async def callback_provider_get(
+    code: str | None = Query(default=None, min_length=1),
+    state: str | None = Query(default=None, min_length=8, max_length=255),
+    error: str | None = Query(default=None),
+    error_description: str | None = Query(default=None),
+    redirect_uri: str | None = Query(default=None),
+    service: IntegrationService = Depends(get_integration_service),
+) -> IntegrationConnectionStatus:
+    """Support Google direct callback redirects to backend to avoid 405 on GET."""
+
+    if error:
+        detail = error_description or error
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"OAuth provider error: {detail}")
+    if code is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing authorization code")
+    if state is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OAuth state")
+
+    try:
+        provider_name, user_id = service.parse_oauth_state(state)
+        principal = Principal(user_id=user_id, role="user")
+        payload = OAuthCallbackRequest(
+            provider_name=provider_name,
+            code=code,
+            state=state,
+            redirect_uri=redirect_uri,
+        )
         return await service.handle_callback(principal, payload)
     except IntegrationServiceError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field
@@ -10,7 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime settings for API, integrations, and background processing."""
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+    _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    model_config = SettingsConfigDict(
+        env_file=str(_PROJECT_ROOT / ".env"),
+        case_sensitive=True,
+    )
 
     app_env: str = Field(default="local", alias="APP_ENV")
     database_url: str = Field(alias="DATABASE_URL")
@@ -27,6 +32,7 @@ class Settings(BaseSettings):
     oauth_token_encryption_key: str = Field(alias="OAUTH_TOKEN_ENCRYPTION_KEY")
 
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
+    redis_enabled: bool = Field(default=True, alias="REDIS_ENABLED")
     redis_short_code_ttl_seconds: int = Field(
         default=300,
         alias="REDIS_SHORT_CODE_TTL_SECONDS",
@@ -68,6 +74,14 @@ class Settings(BaseSettings):
         default=5,
         alias="ANALYTICS_CRON_INTERVAL_MINUTES",
     )
+
+    cors_allow_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://127.0.0.1:3000"],
+        alias="CORS_ALLOW_ORIGINS",
+    )
+    cors_allow_credentials: bool = Field(default=True, alias="CORS_ALLOW_CREDENTIALS")
+    cors_allow_methods: list[str] = Field(default=["*"], alias="CORS_ALLOW_METHODS")
+    cors_allow_headers: list[str] = Field(default=["*"], alias="CORS_ALLOW_HEADERS")
 
 
 @lru_cache(maxsize=1)

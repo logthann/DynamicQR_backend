@@ -46,11 +46,15 @@ async def get_qr_service(
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[QRCodeRead],
     summary="List QR codes",
     description="List QR codes by owner/campaign/status with RBAC and soft-delete-aware filtering.",
     response_description="QR code list.",
+)
+@router.get(
+    "/",
+    include_in_schema=False,
 )
 async def list_qr_codes(
     owner_user_id: int | None = None,
@@ -110,12 +114,18 @@ async def get_qr_code(
 
 
 @router.post(
-    "/",
+    "",
     response_model=QRCodeRead,
     status_code=status.HTTP_201_CREATED,
     summary="Create QR code",
     description="Create URL or event QR code with generated Base62 short code.",
     response_description="Created QR code payload.",
+)
+@router.post(
+    "/",
+    response_model=QRCodeRead,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
 )
 async def create_qr_code(
     payload: QRCodeCreate,

@@ -142,6 +142,8 @@ class GoogleCalendarService:
         range_type: CalendarRangeType,
         year: int,
         month: int | None = None,
+        from_month: int | None = None,
+        to_month: int | None = None,
     ) -> GoogleCalendarEventListResponse:
         """List Google Calendar events for a month or year and attach local sync metadata."""
 
@@ -153,7 +155,13 @@ class GoogleCalendarService:
             raise GoogleCalendarServiceError("Google Calendar integration is not connected")
 
         access_token = self.token_crypto.decrypt_token(integration.access_token)
-        time_min, time_max = self._resolve_period_bounds(range_type=range_type, year=year, month=month)
+        time_min, time_max = self._resolve_period_bounds(
+            range_type=range_type,
+            year=year,
+            month=month,
+            from_month=from_month,
+            to_month=to_month,
+        )
 
         events = await self._fetch_google_events(
             access_token=access_token,
@@ -184,6 +192,8 @@ class GoogleCalendarService:
             range_type=range_type,
             year=year,
             month=month,
+            from_month=from_month,
+            to_month=to_month,
             total=len(items),
             events=items,
         )
@@ -363,20 +373,48 @@ class GoogleCalendarService:
         range_type: CalendarRangeType,
         year: int,
         month: int | None,
+        from_month: int | None,
+        to_month: int | None,
     ) -> tuple[datetime, datetime]:
         if range_type == CalendarRangeType.year:
             start = datetime(year, 1, 1, tzinfo=UTC)
             end = datetime(year + 1, 1, 1, tzinfo=UTC)
             return start, end
 
-        if month is None or not 1 <= month <= 12:
-            raise GoogleCalendarServiceError("Month must be provided and be between 1 and 12")
+        if month is not None and (from_month is not None or to_month is not None):
+            raise GoogleCalendarServiceError(
+                "Provide either month or from_month/to_month for month range"
+            )
 
-        start = datetime(year, month, 1, tzinfo=UTC)
-        if month == 12:
+        if month is not None:
+            if not 1 <= month <= 12:
+                raise GoogleCalendarServiceError("Month must be between 1 and 12")
+            start = datetime(year, month, 1, tzinfo=UTC)
+            if month == 12:
+                end = datetime(year + 1, 1, 1, tzinfo=UTC)
+            else:
+                end = datetime(year, month + 1, 1, tzinfo=UTC)
+            return start, end
+
+        if from_month is None and to_month is None:
+            raise GoogleCalendarServiceError(
+                "Month must be provided, or provide both from_month and to_month"
+            )
+
+        if from_month is None or to_month is None:
+            raise GoogleCalendarServiceError("Both from_month and to_month must be provided")
+
+        if not 1 <= from_month <= 12 or not 1 <= to_month <= 12:
+            raise GoogleCalendarServiceError("from_month and to_month must be between 1 and 12")
+
+        if from_month > to_month:
+            raise GoogleCalendarServiceError("from_month must be less than or equal to to_month")
+
+        start = datetime(year, from_month, 1, tzinfo=UTC)
+        if to_month == 12:
             end = datetime(year + 1, 1, 1, tzinfo=UTC)
         else:
-            end = datetime(year, month + 1, 1, tzinfo=UTC)
+            end = datetime(year, to_month + 1, 1, tzinfo=UTC)
         return start, end
 
     async def _fetch_google_events(
@@ -415,8 +453,10 @@ class GoogleCalendarService:
             if not isinstance(event_id, str) or not event_id:
                 continue
 
-            start_raw = (item.get("start") or {}).get("dateTime")
-            end_raw = (item.get("end") or {}).get("dateTime")
+            start_payload = item.get("start") or {}
+            end_payload = item.get("end") or {}
+            start_raw = start_payload.get("dateTime") or start_payload.get("date")
+            end_raw = end_payload.get("dateTime") or end_payload.get("date")
 
             normalized.append(
                 {
@@ -468,7 +508,10 @@ class GoogleCalendarService:
         if not isinstance(raw, str) or not raw:
             return None
         try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=UTC)
+            return parsed
         except ValueError:
             return None
 

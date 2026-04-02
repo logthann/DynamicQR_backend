@@ -39,6 +39,7 @@ class OAuthConnectResponse(BaseModel):
     provider_name: IntegrationProvider
     authorization_url: str
     state: str
+    redirect_uri: str
 
 
 class OAuthCallbackRequest(BaseModel):
@@ -100,6 +101,8 @@ class GoogleCalendarEventListResponse(BaseModel):
     range_type: CalendarRangeType
     year: int
     month: int | None = None
+    from_month: int | None = None
+    to_month: int | None = None
     total: int
     events: list[GoogleCalendarEventListItem]
 

@@ -144,6 +144,8 @@ async def test_list_events_by_period_returns_campaign_link_metadata() -> None:
         range_type=CalendarRangeType.month,
         year=2026,
         month=11,
+        from_month=None,
+        to_month=None,
     )
 
     assert response.total == 2
@@ -178,6 +180,73 @@ async def test_list_events_month_requires_valid_month() -> None:
             range_type=CalendarRangeType.month,
             year=2026,
             month=None,
+            from_month=None,
+            to_month=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_events_month_range_returns_successful_window() -> None:
+    session = AsyncMock()
+    session.execute.return_value = _FakeExecuteResult(rows=[])
+    integration_repo = AsyncMock()
+    integration_repo.get_by_user_and_provider.return_value = ProviderCredentialRecord(
+        id=5,
+        user_id=42,
+        provider_name=IntegrationProvider.google_calendar,
+        access_token=OAuthTokenCrypto(FERNET_TEST_KEY).encrypt_token("raw-access"),
+        refresh_token=None,
+        expires_at=None,
+    )
+
+    service = GoogleCalendarService(
+        session,
+        integration_repo,
+        token_crypto=OAuthTokenCrypto(FERNET_TEST_KEY),
+    )
+    service._fetch_google_events = AsyncMock(return_value=[])
+
+    response = await service.list_events_by_period(
+        user_id=42,
+        range_type=CalendarRangeType.month,
+        year=2026,
+        month=None,
+        from_month=3,
+        to_month=5,
+    )
+
+    assert response.month is None
+    assert response.from_month == 3
+    assert response.to_month == 5
+
+
+@pytest.mark.asyncio
+async def test_list_events_month_rejects_mixed_single_and_range_inputs() -> None:
+    session = AsyncMock()
+    integration_repo = AsyncMock()
+    integration_repo.get_by_user_and_provider.return_value = ProviderCredentialRecord(
+        id=5,
+        user_id=42,
+        provider_name=IntegrationProvider.google_calendar,
+        access_token=OAuthTokenCrypto(FERNET_TEST_KEY).encrypt_token("raw-access"),
+        refresh_token=None,
+        expires_at=None,
+    )
+
+    service = GoogleCalendarService(
+        session,
+        integration_repo,
+        token_crypto=OAuthTokenCrypto(FERNET_TEST_KEY),
+    )
+
+    with pytest.raises(GoogleCalendarServiceError, match="either month or from_month/to_month"):
+        await service.list_events_by_period(
+            user_id=42,
+            range_type=CalendarRangeType.month,
+            year=2026,
+            month=4,
+            from_month=3,
+            to_month=5,
         )
 
 
@@ -226,5 +295,21 @@ async def test_remove_campaign_event_requires_calendar_integration() -> None:
 
     with pytest.raises(GoogleCalendarServiceError, match="not connected"):
         await service.remove_campaign_event(user_id=42, google_event_id="evt-1")
+
+
+def test_parse_rfc3339_datetime_supports_date_only_values() -> None:
+    service = GoogleCalendarService(
+        AsyncMock(),
+        AsyncMock(),
+        token_crypto=OAuthTokenCrypto(FERNET_TEST_KEY),
+    )
+
+    parsed = service._parse_rfc3339_datetime("2026-04-10")
+
+    assert parsed is not None
+    assert parsed.tzinfo == UTC
+    assert parsed.year == 2026
+    assert parsed.month == 4
+    assert parsed.day == 10
 
 

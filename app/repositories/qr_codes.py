@@ -116,6 +116,24 @@ class QRCodeRepository:
         result = await self.session.execute(statement, params)
         return [QRCodeRead.model_validate(dict(row)) for row in result.mappings().all()]
 
+    async def get_campaign_owner_user_id(self, campaign_id: int) -> int | None:
+        """Return campaign owner id for access checks, or None if campaign is unavailable."""
+
+        statement = text(
+            """
+            SELECT user_id
+            FROM campaigns
+            WHERE id = :campaign_id
+              AND deleted_at IS NULL
+            LIMIT 1
+            """
+        )
+        result = await self.session.execute(statement, {"campaign_id": campaign_id})
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return int(row["user_id"])
+
     async def create(self, user_id: int, short_code: str, payload: QRCodeCreate) -> QRCodeRead:
         """Insert one QR code linked to user/campaign and return created row."""
 

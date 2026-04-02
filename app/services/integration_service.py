@@ -104,7 +104,32 @@ class IntegrationService:
             provider_name=payload.provider_name,
             authorization_url=f"{provider_config.auth_url}?{query}",
             state=state,
+            redirect_uri=redirect_uri,
         )
+
+    def parse_oauth_state(self, state: str) -> tuple[IntegrationProvider, int]:
+        """Parse OAuth state in format `<provider>:<user_id>:<entropy>`."""
+
+        parts = state.split(":", 2)
+        if len(parts) != 3:
+            raise IntegrationServiceError("Invalid OAuth state format")
+
+        provider_raw, user_id_raw, _ = parts
+
+        try:
+            provider = IntegrationProvider(provider_raw)
+        except ValueError as exc:
+            raise IntegrationServiceError("Invalid OAuth state provider") from exc
+
+        try:
+            user_id = int(user_id_raw)
+        except ValueError as exc:
+            raise IntegrationServiceError("Invalid OAuth state user id") from exc
+
+        if user_id <= 0:
+            raise IntegrationServiceError("Invalid OAuth state user id")
+
+        return provider, user_id
 
     async def handle_callback(
         self,

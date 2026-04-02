@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+import os
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rbac import Principal, RBACError
+from app.core.security import decode_access_token
 from app.db.session import get_db_session
 from app.repositories.campaigns import CampaignRepository
 from app.schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate
@@ -18,6 +22,7 @@ from app.services.google_calendar_service import GoogleCalendarService, GoogleCa
 from app.repositories.user_integrations import UserIntegrationRepository
 
 router = APIRouter(prefix="/api/v1/campaigns", tags=["campaigns"])
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _resolve_include_deleted(principal: Principal, include_deleted: bool) -> bool:
@@ -36,17 +41,51 @@ def _resolve_include_deleted(principal: Principal, include_deleted: bool) -> boo
 
 
 async def get_current_principal(
-    x_user_id: int = Header(default=1),
-    x_role: str = Header(default="admin"),
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+    x_user_id: int | None = Header(default=None),
+    x_role: str | None = Header(default=None),
     x_company_name: str | None = Header(default=None),
 ) -> Principal:
-    """Build a principal from request headers for temporary auth wiring."""
+    """Resolve authenticated principal from JWT bearer token.
 
-    role = x_role.strip().lower()
-    if role not in {"admin", "agency", "user"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role header")
+    A temporary header-based fallback can be enabled only for local dev/tests with
+    ALLOW_HEADER_PRINCIPAL_AUTH=true.
+    """
 
-    return Principal(user_id=x_user_id, role=role, company_name=x_company_name)
+    if credentials is not None and credentials.scheme.lower() == "bearer":
+        try:
+            payload = decode_access_token(credentials.credentials)
+            subject = payload.get("sub")
+            role = str(payload.get("role", "")).strip().lower()
+            if subject is None or role not in {"admin", "agency", "user"}:
+                raise ValueError("Token payload missing required claims")
+
+            return Principal(
+                user_id=int(subject),
+                role=role,
+                company_name=payload.get("company_name"),
+            )
+        except Exception as exc:  # pragma: no cover - concrete JWT errors are library-specific
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired access token",
+            ) from exc
+
+    allow_header_fallback = os.getenv("ALLOW_HEADER_PRINCIPAL_AUTH", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if allow_header_fallback and x_user_id is not None and x_role:
+        role = x_role.strip().lower()
+        if role not in {"admin", "agency", "user"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role header")
+        return Principal(user_id=x_user_id, role=role, company_name=x_company_name)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated",
+    )
 
 
 async def get_campaign_service(
@@ -69,7 +108,7 @@ async def get_campaign_calendar_sync_service(
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[CampaignRead],
     summary="List campaigns",
     description="List campaigns visible to the current principal with RBAC and soft-delete controls.",
@@ -133,7 +172,7 @@ async def get_campaign(
 
 
 @router.post(
-    "/",
+    "",
     response_model=CampaignRead,
     status_code=status.HTTP_201_CREATED,
     summary="Create campaign",

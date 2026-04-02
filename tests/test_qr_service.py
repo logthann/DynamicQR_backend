@@ -38,6 +38,7 @@ def _qr_read(*, qr_id: int = 1, user_id: int = 10, qr_type: str = "url") -> QRCo
 async def test_create_url_qr_persists_design_config_and_generated_code() -> None:
     repository = AsyncMock()
     repository.create.return_value = _qr_read(qr_id=11, user_id=7)
+    repository.get_campaign_owner_user_id.return_value = 7
 
     async def generate_code(_: object) -> str:
         return "newCODE1"
@@ -63,6 +64,7 @@ async def test_create_url_qr_persists_design_config_and_generated_code() -> None
 async def test_create_event_qr_invokes_event_handler_when_provided() -> None:
     repository = AsyncMock()
     repository.create.return_value = _qr_read(qr_id=33, user_id=3, qr_type="event")
+    repository.get_campaign_owner_user_id.return_value = 3
     event_handler = AsyncMock()
 
     async def generate_code(_: object) -> str:
@@ -92,6 +94,7 @@ async def test_create_event_qr_invokes_event_handler_when_provided() -> None:
 @pytest.mark.asyncio
 async def test_user_cannot_create_qr_for_other_owner() -> None:
     repository = AsyncMock()
+    repository.get_campaign_owner_user_id.return_value = 1
 
     async def generate_code(_: object) -> str:
         return "blocked01"
@@ -129,4 +132,20 @@ async def test_update_qr_checks_scope_before_repository_update() -> None:
 
     assert result is not None
     repository.update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_qr_rejects_campaign_outside_owner_scope() -> None:
+    repository = AsyncMock()
+    repository.get_campaign_owner_user_id.return_value = 99
+
+    service = QRService(repository)
+
+    with pytest.raises(RBACError, match="Campaign is outside principal scope"):
+        await service.list_qrs_by_owner(
+            Principal(user_id=4, role="user"),
+            owner_user_id=4,
+            campaign_id=5,
+        )
+
 

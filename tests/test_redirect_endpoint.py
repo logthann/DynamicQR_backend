@@ -52,6 +52,48 @@ async def test_redirect_endpoint_returns_302_for_known_short_code(
 
 
 @pytest.mark.asyncio
+async def test_redirect_endpoint_enqueues_scan_log(
+    app: FastAPI,
+    async_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    qr_code = RedirectQRCode(
+        id=9,
+        short_code="enqueue1",
+        destination_url="https://example.com/destination",
+        status=QRCodeStatus.active,
+        deleted_at=None,
+        ga_measurement_id=None,
+        utm_source=None,
+        utm_medium=None,
+        utm_campaign=None,
+    )
+    app.dependency_overrides[get_qr_code_repository] = lambda: _StubQRCodeRepository(qr_code)
+
+    captured: dict[str, object] = {}
+
+    async def _fake_enqueue_scan_log(*, qr_id: int, scan_metadata):
+        captured["qr_id"] = qr_id
+        captured["scan_metadata"] = scan_metadata
+        return "msg-1"
+
+    monkeypatch.setattr("app.api.v1.redirect.enqueue_scan_log", _fake_enqueue_scan_log)
+
+    try:
+        response = await async_client.get(
+            "/q/enqueue1",
+            follow_redirects=False,
+            headers={"user-agent": "pytest-browser"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 302
+    assert captured["qr_id"] == 9
+    assert captured["scan_metadata"] is not None
+
+
+@pytest.mark.asyncio
 async def test_redirect_endpoint_returns_404_for_unknown_short_code(
     app: FastAPI,
     async_client: AsyncClient,
