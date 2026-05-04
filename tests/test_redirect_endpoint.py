@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -165,3 +167,39 @@ async def test_redirect_endpoint_returns_410_for_soft_deleted_qr(
     assert response.json()["detail"] == "QR code has been deleted"
 
 
+@pytest.mark.asyncio
+async def test_redirect_endpoint_logs_tracking_debug_lines(
+    app: FastAPI,
+    async_client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    qr_code = RedirectQRCode(
+        id=11,
+        short_code="trk001",
+        destination_url="https://example.com/page",
+        status=QRCodeStatus.active,
+        deleted_at=None,
+        ga_measurement_id="G-TEST1234",
+        utm_source="newsletter",
+        utm_medium="email",
+        utm_campaign="spring",
+    )
+
+    app.dependency_overrides[get_qr_code_repository] = lambda: _StubQRCodeRepository(qr_code)
+
+    try:
+        with caplog.at_level(logging.INFO):
+            response = await async_client.get("/q/trk001", follow_redirects=False)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 302
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("[TRACKING DEBUG] Short Code: trk001" in message for message in messages)
+    assert any("[TRACKING DEBUG] GA4 Measurement ID: G-TEST1234" in message for message in messages)
+    assert any("[TRACKING DEBUG] Original Destination: https://example.com/page" in message for message in messages)
+    assert any(
+        "[TRACKING DEBUG] Final Redirect URL: https://example.com/page?utm_source=newsletter&utm_medium=email&utm_campaign=spring"
+        in message
+        for message in messages
+    )

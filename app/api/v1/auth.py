@@ -21,8 +21,11 @@ class RegisterRequest(BaseModel):
 
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=8, max_length=128)
-    company_name: str | None = Field(default=None, max_length=255)
-    role: str = Field(default="user", pattern="^(admin|agency|user)$")
+    username: str = Field(min_length=3, max_length=64)
+    full_name: str | None = Field(default=None, max_length=255)
+    phone_number: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=512)
+    role: str = Field(default="employee", pattern="^(admin|employee)$")
 
 
 class RegisterResponse(BaseModel):
@@ -32,8 +35,11 @@ class RegisterResponse(BaseModel):
 
     id: int
     email: str
+    username: str
+    full_name: str | None = None
+    phone_number: str | None = None
+    address: str | None = None
     role: str
-    company_name: str | None = None
     created_at: datetime
 
 
@@ -65,7 +71,7 @@ async def register(
 ) -> RegisterResponse:
     """Register a new user account in the users table."""
 
-    if payload.role not in {"admin", "agency", "user"}:
+    if payload.role not in {"admin", "employee"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported role")
 
     password_hash = hash_password(payload.password)
@@ -75,7 +81,10 @@ async def register(
         INSERT INTO users (
             email,
             password_hash,
-            company_name,
+            username,
+            full_name,
+            phone_number,
+            address,
             role,
             created_at,
             updated_at,
@@ -83,7 +92,10 @@ async def register(
         ) VALUES (
             :email,
             :password_hash,
-            :company_name,
+            :username,
+            :full_name,
+            :phone_number,
+            :address,
             :role,
             UTC_TIMESTAMP(),
             UTC_TIMESTAMP(),
@@ -98,7 +110,10 @@ async def register(
             {
                 "email": payload.email.strip().lower(),
                 "password_hash": password_hash,
-                "company_name": payload.company_name,
+                "username": payload.username.strip(),
+                "full_name": payload.full_name,
+                "phone_number": payload.phone_number,
+                "address": payload.address,
                 "role": payload.role,
             },
         )
@@ -106,12 +121,12 @@ async def register(
     except IntegrityError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Email already exists",
+            detail="Email or username already exists",
         ) from exc
 
     select_statement = text(
         """
-        SELECT id, email, role, company_name, created_at
+        SELECT id, email, username, full_name, phone_number, address, role, created_at
         FROM users
         WHERE email = :email
           AND deleted_at IS NULL
@@ -150,7 +165,7 @@ async def login(
 
     statement = text(
         """
-        SELECT id, email, password_hash, role, company_name
+        SELECT id, email, username, full_name, password_hash, role
         FROM users
         WHERE email = :email
           AND deleted_at IS NULL
@@ -175,7 +190,8 @@ async def login(
         role=str(row["role"]),
         extra_claims={
             "email": str(row["email"]),
-            "company_name": row["company_name"],
+            "username": row["username"],
+            "full_name": row["full_name"],
         },
     )
     return LoginResponse(access_token=token)

@@ -10,8 +10,9 @@ from app.api.v1.campaigns import get_current_principal
 from app.core.rbac import Principal, RBACError
 from app.db.session import get_db_session
 from app.repositories.qr_codes import QRCodeRepository
-from app.schemas.qr_code import QRCodeCreate, QRCodeRead, QRCodeStatus, QRCodeUpdate
+from app.schemas.qr_code import QRCodeCreate, QRCodeListItem, QRCodeRead, QRCodeStatus, QRCodeUpdate
 from app.services.qr_service import QRService
+from app.services.qr_service import QRValidationError
 
 router = APIRouter(prefix="/api/v1/qr", tags=["qr-codes"])
 
@@ -47,10 +48,10 @@ async def get_qr_service(
 
 @router.get(
     "",
-    response_model=list[QRCodeRead],
+    response_model=list[QRCodeListItem],
     summary="List QR codes",
-    description="List QR codes by owner/campaign/status with RBAC and soft-delete-aware filtering.",
-    response_description="QR code list.",
+    description="List QR codes by owner/campaign/status with RBAC and soft-delete-aware filtering. Returns campaign info for all roles; admin also gets employee info.",
+    response_description="QR code list with campaign and optional employee info.",
 )
 @router.get(
     "/",
@@ -65,7 +66,7 @@ async def list_qr_codes(
     offset: int = 0,
     principal: Principal = Depends(get_current_principal),
     service: QRService = Depends(get_qr_service),
-) -> list[QRCodeRead]:
+) -> list[QRCodeListItem]:
     """List QR codes visible within principal ownership scope."""
 
     target_owner = owner_user_id if owner_user_id is not None else principal.user_id
@@ -141,6 +142,8 @@ async def create_qr_code(
             payload,
             owner_user_id=owner_user_id,
         )
+    except QRValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RBACError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
@@ -162,6 +165,8 @@ async def update_qr_code(
 
     try:
         qr_code = await service.update_qr(principal, qr_id, payload)
+    except QRValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RBACError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 

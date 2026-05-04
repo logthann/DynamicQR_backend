@@ -44,6 +44,7 @@ def _integration_row(integration_id: int = 1) -> dict[str, object]:
         "access_token": "enc-access",
         "refresh_token": "enc-refresh",
         "expires_at": datetime.now(UTC),
+        "granted_scopes": '["https://www.googleapis.com/auth/calendar.events","https://www.googleapis.com/auth/analytics.readonly"]',
     }
 
 

@@ -40,3 +40,20 @@ def test_build_measurement_payload_returns_expected_event_shape() -> None:
     assert payload["events"][0]["params"]["qr_id"] == 10
     assert payload["events"][0]["params"]["device_type"] == "mobile"
 
+
+def test_enrich_redirect_url_does_not_add_ga_when_missing() -> None:
+    service = GoogleAnalyticsService()
+
+    url = service.enrich_redirect_url(
+        destination_url="https://example.com/landing?existing=1",
+        ga_measurement_id=None,
+        utm_source=None,
+        utm_medium=None,
+        utm_campaign=None,
+    )
+
+    assert "ga_measurement_id=" not in url
+    assert "ga4_measurement_id=" not in url
+    assert "existing=1" in url
+
+

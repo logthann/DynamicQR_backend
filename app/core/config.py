@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     )
     oauth_token_encryption_key: str = Field(alias="OAUTH_TOKEN_ENCRYPTION_KEY")
 
+    service_jwt_secret: str = Field(
+        default="local-service-secret-change-me",
+        alias="SERVICE_JWT_SECRET",
+    )
+    service_jwt_algorithm: str = Field(default="HS256", alias="SERVICE_JWT_ALGORITHM")
+    service_jwt_issuer: str = Field(default="dynamicqr-internal", alias="SERVICE_JWT_ISSUER")
+    service_jwt_audience: str = Field(default="dynamicqr-tracking", alias="SERVICE_JWT_AUDIENCE")
+
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     redis_enabled: bool = Field(default=True, alias="REDIS_ENABLED")
     redis_short_code_ttl_seconds: int = Field(

@@ -71,7 +71,7 @@ async def test_import_selected_events_creates_and_updates_idempotently() -> None
 
     service = CampaignCalendarSyncService(campaign_repo, google_service)
     result = await service.import_selected_events(
-        Principal(user_id=42, role="user"),
+        Principal(user_id=42, role="employee"),
         CalendarImportCampaignsRequest(
             range_type=CalendarRangeType.month,
             year=2026,
@@ -104,7 +104,7 @@ async def test_import_selected_events_skips_missing_event_ids() -> None:
 
     service = CampaignCalendarSyncService(campaign_repo, google_service)
     result = await service.import_selected_events(
-        Principal(user_id=42, role="user"),
+        Principal(user_id=42, role="employee"),
         CalendarImportCampaignsRequest(
             range_type=CalendarRangeType.month,
             year=2026,
@@ -148,7 +148,7 @@ async def test_import_selected_events_skips_when_campaign_already_synced() -> No
     )
 
     result = await service.import_selected_events(
-        Principal(user_id=42, role="user"),
+        Principal(user_id=42, role="employee"),
         CalendarImportCampaignsRequest(
             range_type=CalendarRangeType.month,
             year=2026,
@@ -192,14 +192,13 @@ async def test_sync_campaign_to_calendar_updates_sync_metadata() -> None:
 async def test_remove_campaign_from_calendar_clears_link() -> None:
     campaign_repo = AsyncMock()
     google_service = AsyncMock()
-    now = datetime.now(UTC)
     campaign = _campaign(campaign_id=9, google_event_id="evt-google-999", name="Sync Me")
 
     campaign_repo.update.return_value = campaign.model_copy(
         update={
             "google_event_id": None,
-            "calendar_sync_status": "removed",
-            "calendar_last_synced_at": now,
+            "calendar_sync_status": "not_linked",
+            "calendar_last_synced_at": None,
             "calendar_sync_hash": None,
         }
     )
@@ -208,10 +207,33 @@ async def test_remove_campaign_from_calendar_clears_link() -> None:
     updated = await service.remove_campaign_from_calendar(user_id=42, campaign=campaign)
 
     assert updated.google_event_id is None
-    assert str(updated.calendar_sync_status) == "removed"
+    assert str(updated.calendar_sync_status) == "not_linked"
+    assert updated.calendar_last_synced_at is None
+    assert updated.calendar_sync_hash is None
     google_service.remove_campaign_event.assert_awaited_once_with(
         user_id=42,
         google_event_id="evt-google-999",
     )
 
 
+@pytest.mark.asyncio
+async def test_remove_campaign_from_calendar_skips_google_delete_when_not_linked() -> None:
+    campaign_repo = AsyncMock()
+    google_service = AsyncMock()
+    campaign = _campaign(campaign_id=10, google_event_id=None, name="No Link")
+
+    campaign_repo.update.return_value = campaign.model_copy(
+        update={
+            "google_event_id": None,
+            "calendar_sync_status": "not_linked",
+            "calendar_last_synced_at": None,
+            "calendar_sync_hash": None,
+        }
+    )
+
+    service = CampaignCalendarSyncService(campaign_repo, google_service)
+    updated = await service.remove_campaign_from_calendar(user_id=42, campaign=campaign)
+
+    assert updated.google_event_id is None
+    assert str(updated.calendar_sync_status) == "not_linked"
+    google_service.remove_campaign_event.assert_not_awaited()

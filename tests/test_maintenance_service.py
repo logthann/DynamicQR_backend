@@ -23,7 +23,7 @@ async def test_non_admin_cannot_hard_delete() -> None:
 
     with pytest.raises(RBACError):
         await service.hard_delete_campaign(
-            Principal(user_id=5, role="user"),
+            Principal(user_id=5, role="employee"),
             campaign_id=10,
             reason="maintenance cleanup",
             confirm=True,

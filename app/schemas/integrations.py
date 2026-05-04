@@ -58,6 +58,7 @@ class ProviderCredentialWrite(BaseModel):
     access_token: str = Field(min_length=1)
     refresh_token: str | None = None
     expires_at: datetime | None = None
+    granted_scopes: list[str] = Field(default_factory=list)
 
 
 class ProviderCredentialRecord(BaseModel):
@@ -71,6 +72,7 @@ class ProviderCredentialRecord(BaseModel):
     access_token: str
     refresh_token: str | None = None
     expires_at: datetime | None = None
+    granted_scopes: list[str] = Field(default_factory=list)
 
 
 class IntegrationConnectionStatus(BaseModel):
@@ -80,6 +82,21 @@ class IntegrationConnectionStatus(BaseModel):
     connected: bool
     expires_at: datetime | None = None
     has_refresh_token: bool = False
+    granted_scopes: list[str] = Field(default_factory=list)
+    requires_reauth: bool = False
+    status_reason: str | None = None
+    last_validated_at: datetime | None = None
+    auto_refresh_attempted: bool = False
+    auto_refresh_succeeded: bool | None = None
+
+
+class IntegrationSessionSyncResponse(BaseModel):
+    """Session bootstrap response for frontend background refresh flow."""
+
+    checked_at: datetime
+    refresh_if_expiring: bool
+    refresh_window_seconds: int = Field(ge=0)
+    items: list[IntegrationConnectionStatus]
 
 
 class GoogleCalendarEventListItem(BaseModel):
@@ -123,5 +140,28 @@ class CalendarImportCampaignsResponse(BaseModel):
     updated_count: int
     skipped_count: int
     campaigns: list[CampaignRead]
+
+
+class GADetectResponse(BaseModel):
+    """Response model for GA measurement-id detection by target URL."""
+
+    url: str
+    ga_measurement_id: str | None = None
+    confidence: str
+    source: str
+
+
+class GAPropertyItem(BaseModel):
+    """One GA4 property visible to the authenticated user."""
+
+    property_id: str
+    display_name: str
+    ga_measurement_id: str | None = None
+
+
+class GAPropertiesResponse(BaseModel):
+    """List response for GA4 properties API."""
+
+    items: list[GAPropertyItem]
 
 

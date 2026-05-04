@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class CampaignCalendarSyncStatus(str, Enum):
@@ -17,6 +17,21 @@ class CampaignCalendarSyncStatus(str, Enum):
     removed = "removed"
 
 
+class GATrackingType(str, Enum):
+    """Tracking strategy for campaign/QR GA configuration."""
+
+    oauth = "OAUTH"
+    manual = "MANUAL"
+    no = "NO"
+
+
+class CampaignCreatorInfo(BaseModel):
+    """Creator information for campaign (admin view only)."""
+
+    username: str | None = None
+    email: str
+
+
 class CampaignBase(BaseModel):
     """Common campaign fields shared by create and update flows."""
 
@@ -25,6 +40,17 @@ class CampaignBase(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     status: str = Field(min_length=1, max_length=50)
+    ga_type: GATrackingType | None = None
+    ga_measurement_id: str | None = Field(
+        default=None,
+        max_length=100,
+        validation_alias=AliasChoices("ga_measurement_id", "ga4_measurement_id"),
+    )
+    ga_property_id: str | None = Field(
+        default=None,
+        max_length=100,
+        validation_alias=AliasChoices("ga_property_id", "ga4_property_id"),
+    )
 
 
 class CampaignCreate(CampaignBase):
@@ -41,6 +67,17 @@ class CampaignUpdate(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     status: str | None = Field(default=None, min_length=1, max_length=50)
+    ga_type: GATrackingType | None = None
+    ga_measurement_id: str | None = Field(
+        default=None,
+        max_length=100,
+        validation_alias=AliasChoices("ga_measurement_id", "ga4_measurement_id"),
+    )
+    ga_property_id: str | None = Field(
+        default=None,
+        max_length=100,
+        validation_alias=AliasChoices("ga_property_id", "ga4_property_id"),
+    )
     google_event_id: str | None = Field(default=None, max_length=255)
     calendar_sync_status: CampaignCalendarSyncStatus | None = None
     calendar_last_synced_at: datetime | None = None
@@ -54,9 +91,13 @@ class CampaignRead(CampaignBase):
 
     id: int
     user_id: int
+    creator: CampaignCreatorInfo | None = None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None = None
+    ga_type: GATrackingType | None = None
+    ga_measurement_id: str | None = None
+    ga_property_id: str | None = None
     google_event_id: str | None = None
     calendar_sync_status: CampaignCalendarSyncStatus = CampaignCalendarSyncStatus.not_linked
     calendar_last_synced_at: datetime | None = None

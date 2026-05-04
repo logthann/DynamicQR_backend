@@ -16,12 +16,11 @@ def test_principal_from_claims_parses_valid_claims() -> None:
     principal = principal_from_claims(
         {
             "sub": "42",
-            "role": "agency",
-            "company_name": "Acme",
+            "role": "employee",
         }
     )
 
-    assert principal == Principal(user_id=42, role="agency", company_name="Acme")
+    assert principal == Principal(user_id=42, role="employee")
 
 
 def test_principal_from_claims_rejects_invalid_role() -> None:
@@ -39,25 +38,8 @@ def test_admin_can_access_any_scope() -> None:
     )
 
 
-def test_agency_scope_requires_matching_company() -> None:
-    agency = Principal(user_id=5, role="agency", company_name="Acme")
-
-    ensure_scope_access(
-        agency,
-        owner_user_id=9,
-        owner_company_name="Acme",
-    )
-
-    with pytest.raises(RBACError):
-        ensure_scope_access(
-            agency,
-            owner_user_id=9,
-            owner_company_name="Other Co",
-        )
-
-
-def test_user_scope_requires_creator_match() -> None:
-    user = Principal(user_id=7, role="user")
+def test_employee_scope_requires_creator_match() -> None:
+    user = Principal(user_id=7, role="employee")
 
     ensure_scope_access(
         user,
@@ -75,15 +57,12 @@ def test_user_scope_requires_creator_match() -> None:
 
 def test_scope_filter_by_role() -> None:
     assert scope_filter(Principal(user_id=1, role="admin")) == {}
-    assert scope_filter(
-        Principal(user_id=3, role="agency", company_name="Acme"),
-    ) == {"company_name": "Acme"}
-    assert scope_filter(Principal(user_id=4, role="user")) == {"user_id": 4}
+    assert scope_filter(Principal(user_id=4, role="employee")) == {"user_id": 4}
 
 
 def test_require_any_role_enforces_allowed_roles() -> None:
-    require_any_role(Principal(user_id=1, role="admin"), ["admin", "agency"])
+    require_any_role(Principal(user_id=1, role="admin"), ["admin", "employee"])
 
     with pytest.raises(RBACError):
-        require_any_role(Principal(user_id=8, role="user"), ["admin"])
+        require_any_role(Principal(user_id=8, role="employee"), ["admin"])
 

@@ -75,5 +75,16 @@ async def redirect_by_short_code(
         logger.exception("Failed to enqueue scan log for qr_id=%s", qr_code.id)
 
     redirect_url = build_redirect_url(qr_code)
-    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
+    # Temporary direct stdout output for local debugging visibility.
+    print(f"[TRACKING DEBUG] Short Code: {short_code}", flush=True)
+    print(f"[TRACKING DEBUG] GA4 Measurement ID: {qr_code.ga_measurement_id}", flush=True)
+    print(f"[TRACKING DEBUG] Original Destination: {qr_code.destination_url}", flush=True)
+    print(f"[TRACKING DEBUG] Final Redirect URL: {redirect_url}", flush=True)
+
+    logger.info("[TRACKING DEBUG] Short Code: %s", short_code)
+    logger.info("[TRACKING DEBUG] GA4 Measurement ID: %s", qr_code.ga_measurement_id)
+    logger.info("[TRACKING DEBUG] Original Destination: %s", qr_code.destination_url)
+    logger.info("[TRACKING DEBUG] Final Redirect URL: %s", redirect_url)
+
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)

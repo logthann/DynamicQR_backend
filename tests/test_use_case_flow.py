@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+import uuid
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -160,6 +161,7 @@ class _FlowIntegrationService:
                 f"{payload.provider_name.value}"
             ),
             state=payload.state or "state-token",
+            redirect_uri=str(payload.redirect_uri or "http://localhost:3000/integrations/google/callback"),
         )
 
     async def handle_callback(self, principal: Principal, payload) -> IntegrationConnectionStatus:
@@ -187,7 +189,14 @@ class _FlowIntegrationService:
 
 
 class _FlowAnalyticsService:
-    async def get_qr_summary(self, *, qr_id: int, start_date: date, end_date: date) -> AnalyticsSummaryResponse:
+    async def get_qr_summary(
+        self,
+        *,
+        qr_id: int,
+        start_date: date,
+        end_date: date,
+        principal: Principal | None = None,
+    ) -> AnalyticsSummaryResponse:
         return AnalyticsSummaryResponse(
             qr_id=qr_id,
             start_date=start_date,
@@ -204,7 +213,8 @@ class _FlowAnalyticsService:
 @pytest.mark.asyncio
 async def test_admin_flow_auth_campaign_qr_ga4_calendar(app: FastAPI, async_client: AsyncClient) -> None:
     state = _FlowState()
-    principal = Principal(user_id=1, role="admin", company_name="DynamicQR")
+    principal = Principal(user_id=1, role="admin")
+    admin_email = f"admin-{uuid.uuid4().hex[:8]}@dynamicqr.local"
 
     app.dependency_overrides[get_current_principal] = lambda: principal
     app.dependency_overrides[get_campaign_service] = lambda: _FlowCampaignService(state)
@@ -216,10 +226,13 @@ async def test_admin_flow_auth_campaign_qr_ga4_calendar(app: FastAPI, async_clie
         register_response = await async_client.post(
             "/api/v1/auth/register",
             json={
-                "email": "admin@dynamicqr.local",
+                "email": admin_email,
                 "password": "admin-pass-123",
+                "username": f"admin_{uuid.uuid4().hex[:8]}",
+                "full_name": "System Admin",
+                "phone_number": "+84000000000",
+                "address": "HCM City",
                 "role": "admin",
-                "company_name": "DynamicQR",
             },
         )
         assert register_response.status_code == 201
@@ -227,7 +240,7 @@ async def test_admin_flow_auth_campaign_qr_ga4_calendar(app: FastAPI, async_clie
 
         login_response = await async_client.post(
             "/api/v1/auth/login",
-            json={"email": "admin@dynamicqr.local", "password": "admin-pass-123"},
+            json={"email": admin_email, "password": "admin-pass-123"},
         )
         assert login_response.status_code == 200
         assert len(login_response.json()["access_token"]) > 10

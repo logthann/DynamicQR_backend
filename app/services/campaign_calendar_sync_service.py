@@ -174,22 +174,21 @@ class CampaignCalendarSyncService:
         user_id: int,
         campaign: CampaignRead,
     ) -> CampaignRead:
-        """Delete linked Google event and update local campaign link status."""
+        """Delete linked Google event (if present) and clear local calendar linkage fields."""
 
-        if not campaign.google_event_id:
-            raise CampaignCalendarSyncServiceError("Campaign is not linked to a Google Calendar event")
-
-        await self.google_calendar_service.remove_campaign_event(
-            user_id=user_id,
-            google_event_id=campaign.google_event_id,
-        )
+        # Allow idempotent unlink: if no remote event id exists, just clean local fields.
+        if campaign.google_event_id:
+            await self.google_calendar_service.remove_campaign_event(
+                user_id=user_id,
+                google_event_id=campaign.google_event_id,
+            )
 
         updated = await self.campaign_repository.update(
             campaign.id,
             CampaignUpdate(
                 google_event_id=None,
-                calendar_sync_status=CampaignCalendarSyncStatus.removed,
-                calendar_last_synced_at=datetime.now(UTC),
+                calendar_sync_status=CampaignCalendarSyncStatus.not_linked,
+                calendar_last_synced_at=None,
                 calendar_sync_hash=None,
             ),
         )

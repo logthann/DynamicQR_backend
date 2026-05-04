@@ -277,17 +277,20 @@ class GoogleCalendarService:
         access_token: str,
         google_event_id: str,
     ) -> None:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.delete(
-                f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-
-        # Already deleted remotely is treated as idempotent success for unlink flows.
-        if response.status_code == 404:
-            return
-        if response.is_error:
-            raise GoogleCalendarServiceError("Google Calendar event delete failed")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.delete(
+                    f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{google_event_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Event was already removed in Google Calendar, keep unlink flow idempotent.
+            if exc.response.status_code == 404:
+                return
+            raise GoogleCalendarServiceError("Google Calendar event delete failed") from exc
+        except httpx.HTTPError as exc:
+            raise GoogleCalendarServiceError("Google Calendar event delete failed") from exc
 
     def _build_campaign_event_payload(
         self,

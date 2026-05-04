@@ -8,19 +8,40 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.analytics import router as analytics_router
+from app.api.v1.dashboard import router as dashboard_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.campaigns import router as campaigns_router
-from app.api.v1.integrations import router as integrations_router
+from app.api.v1.integrations import ga4_router, router as integrations_router
 from app.api.v1.qr_codes import router as qr_codes_router
 from app.api.v1.redirect import router as redirect_router
+from app.api.v1.tracking import router as tracking_router
+from app.api.v1.users import router as users_router
 from app.core.config import get_settings
 from app.workers.dev_scan_worker import run_scan_log_worker
+
+# Sanity check: if this line never appears, the process entrypoint/console wiring is wrong.
+print("!!! BACKEND BOOTSTRAP COMPLETE !!!", flush=True)
 
 logger = logging.getLogger(__name__)
 
 
+def _ensure_runtime_log_visibility() -> None:
+    """Keep runtime logs visible without replacing Uvicorn's logging config."""
+
+    root_logger = logging.getLogger()
+    if root_logger.level > logging.INFO:
+        root_logger.setLevel(logging.INFO)
+
+    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "app"):
+        target_logger = logging.getLogger(logger_name)
+        if target_logger.level > logging.INFO:
+            target_logger.setLevel(logging.INFO)
+
+
 def create_application() -> FastAPI:
     """Build and configure the FastAPI application instance."""
+
+    _ensure_runtime_log_visibility()
 
     app = FastAPI(
         title="Dynamic QR Platform API",
@@ -53,14 +74,19 @@ def create_application() -> FastAPI:
 
     app.include_router(api_v1_router)
     app.include_router(analytics_router)
+    app.include_router(dashboard_router)
     app.include_router(auth_router)
     app.include_router(campaigns_router)
     app.include_router(integrations_router)
+    app.include_router(ga4_router)
     app.include_router(qr_codes_router)
     app.include_router(redirect_router)
+    app.include_router(tracking_router)
+    app.include_router(users_router)
 
     @app.on_event("startup")
     async def _start_embedded_scan_worker_if_needed() -> None:
+        logger.info("Application startup hook running")
         settings = get_settings()
         queue_backend = settings.queue_backend.lower().strip()
         if settings.app_env != "local" or queue_backend != "memory":

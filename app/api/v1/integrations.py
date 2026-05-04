@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
+from datetime import UTC, datetime
+import re
+import time
+from typing import Deque
+from urllib.parse import urlparse
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,12 +22,16 @@ from app.schemas.integrations import (
     CalendarImportCampaignsResponse,
     CalendarRangeType,
     GoogleCalendarEventListResponse,
+    GADetectResponse,
+    GAPropertiesResponse,
     IntegrationConnectionStatus,
+    IntegrationSessionSyncResponse,
     IntegrationProvider,
     OAuthCallbackRequest,
     OAuthConnectRequest,
     OAuthConnectResponse,
 )
+from app.schemas.common import ApiErrorResponse
 from app.repositories.campaigns import CampaignRepository
 from app.services.campaign_calendar_sync_service import (
     CampaignCalendarSyncService,
@@ -29,6 +41,41 @@ from app.services.google_calendar_service import GoogleCalendarService, GoogleCa
 from app.services.integration_service import IntegrationService, IntegrationServiceError
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["integrations"])
+ga4_router = APIRouter(prefix="/api/v1/ga4", tags=["ga4"])
+
+GA_MEASUREMENT_ID_PATTERN = re.compile(r"\bG-[A-Z0-9]{4,20}\b")
+DETECT_RATE_LIMIT = 5
+DETECT_RATE_WINDOW_SECONDS = 60
+_detect_rate_limit_buckets: dict[int, Deque[float]] = defaultdict(deque)
+
+
+def _error_payload(code: str, message: str, details: dict[str, str] | None = None) -> dict[str, object]:
+    return {"code": code, "message": message, "details": details}
+
+
+def _is_valid_http_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _enforce_detect_rate_limit(user_id: int) -> None:
+    now = time.monotonic()
+    bucket = _detect_rate_limit_buckets[user_id]
+    window_start = now - DETECT_RATE_WINDOW_SECONDS
+
+    while bucket and bucket[0] < window_start:
+        bucket.popleft()
+
+    if len(bucket) >= DETECT_RATE_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=_error_payload(
+                code="RATE_LIMITED",
+                message="Too many detect requests. Please retry later.",
+            ),
+        )
+
+    bucket.append(now)
 
 
 async def get_integration_service(
@@ -76,6 +123,38 @@ async def list_integrations(
     """List connected providers for the current principal."""
 
     return await service.list_connection_statuses(principal)
+
+
+@router.get(
+    "/session-sync",
+    response_model=IntegrationSessionSyncResponse,
+    summary="Sync integration statuses for session startup",
+    description=(
+        "Frontend bootstrap helper: returns provider statuses and can silently refresh "
+        "expiring tokens to avoid forcing users through OAuth reconnect on every login."
+    ),
+    response_description="Connection statuses enriched with refresh/re-auth hints.",
+)
+async def sync_integrations_for_session(
+    refresh_if_expiring: bool = Query(default=True),
+    refresh_window_seconds: int = Query(default=900, ge=0, le=86400),
+    principal: Principal = Depends(get_current_principal),
+    service: IntegrationService = Depends(get_integration_service),
+) -> IntegrationSessionSyncResponse:
+    """Return integration statuses for login bootstrap with optional silent refresh."""
+
+    checked_at = datetime.now(UTC)
+    statuses = await service.sync_connection_statuses(
+        principal,
+        refresh_if_expiring=refresh_if_expiring,
+        refresh_window_seconds=refresh_window_seconds,
+    )
+    return IntegrationSessionSyncResponse(
+        checked_at=checked_at,
+        refresh_if_expiring=refresh_if_expiring,
+        refresh_window_seconds=refresh_window_seconds,
+        items=statuses,
+    )
 
 
 @router.get(
@@ -129,6 +208,92 @@ async def import_google_calendar_events_as_campaigns(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
+@ga4_router.get(
+    "/properties",
+    response_model=GAPropertiesResponse,
+    summary="List GA4 properties",
+    description="Returns GA4 properties visible to current user when analytics scope is granted.",
+    response_description="Accessible GA4 property list.",
+    responses={
+        401: {"model": ApiErrorResponse},
+        403: {"model": ApiErrorResponse},
+    },
+)
+async def list_ga4_properties(
+    principal: Principal = Depends(get_current_principal),
+    service: IntegrationService = Depends(get_integration_service),
+) -> GAPropertiesResponse:
+    """Return GA4 properties for users with analytics scope permission."""
+
+    try:
+        return await service.list_ga4_properties(principal)
+    except IntegrationServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_error_payload(code="GA4_PROPERTIES_ERROR", message=str(exc)),
+        ) from exc
+
+
+@ga4_router.get(
+    "/detect",
+    response_model=GADetectResponse,
+    summary="Detect GA measurement id",
+    description="Detect GA measurement id by scanning target URL HTML.",
+    response_description="Detected GA measurement id with confidence metadata.",
+    responses={
+        400: {"model": ApiErrorResponse},
+        422: {"model": ApiErrorResponse},
+        429: {"model": ApiErrorResponse},
+        504: {"model": ApiErrorResponse},
+    },
+)
+async def detect_ga_measurement_id(
+    url: str = Query(min_length=8, max_length=2048),
+    principal: Principal = Depends(get_current_principal),
+    service: IntegrationService = Depends(get_integration_service),
+) -> GADetectResponse:
+    """Detect GA measurement id with per-user rate limiting and structured errors."""
+
+    try:
+        await service.ensure_analytics_scope(principal)
+    except IntegrationServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=_error_payload(code="MISSING_SCOPE", message=str(exc)),
+        ) from exc
+
+    _enforce_detect_rate_limit(principal.user_id)
+
+    if not _is_valid_http_url(url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_error_payload(code="INVALID_URL", message="URL must be a valid http/https address."),
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=_error_payload(code="DETECT_TIMEOUT", message="Timed out while scanning target URL."),
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_error_payload(code="DETECT_UNREACHABLE", message="Target URL is unreachable or invalid."),
+        ) from exc
+
+    match = GA_MEASUREMENT_ID_PATTERN.search(response.text.upper())
+    return GADetectResponse(
+        url=url,
+        ga_measurement_id=match.group(0) if match else None,
+        confidence="high" if match else "low",
+        source="html_scan" if match else "not_found",
+    )
+
+
 @router.post(
     "/connect",
     response_model=OAuthConnectResponse,
@@ -153,7 +318,10 @@ async def connect_provider(
     "/callback",
     response_model=IntegrationConnectionStatus,
     summary="Handle OAuth callback",
-    description="Exchange authorization code and store encrypted provider tokens.",
+    description=(
+        "Canonical callback flow: frontend receives provider redirect, then POSTs code/state "
+        "to this endpoint to exchange authorization code and store encrypted provider tokens."
+    ),
     response_description="Updated provider connection status.",
 )
 async def callback_provider(
@@ -172,10 +340,11 @@ async def callback_provider(
 @router.get(
     "/callback",
     response_model=IntegrationConnectionStatus,
+    deprecated=True,
     summary="Handle OAuth callback (direct redirect)",
     description=(
-        "Handle provider direct GET redirect callback and exchange authorization code "
-        "without requiring app JWT in this redirect leg."
+        "Compatibility fallback for provider direct GET redirects. "
+        "Primary flow should use frontend callback and POST /integrations/callback."
     ),
     response_description="Updated provider connection status.",
 )
@@ -199,7 +368,7 @@ async def callback_provider_get(
 
     try:
         provider_name, user_id = service.parse_oauth_state(state)
-        principal = Principal(user_id=user_id, role="user")
+        principal = Principal(user_id=user_id, role="employee")
         payload = OAuthCallbackRequest(
             provider_name=provider_name,
             code=code,

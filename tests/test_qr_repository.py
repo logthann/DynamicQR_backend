@@ -110,6 +110,55 @@ async def test_create_includes_campaign_linkage_and_status() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_manual_tracking_forces_ga_property_id_null() -> None:
+    session = AsyncMock()
+    session.execute.side_effect = [
+        _FakeExecuteResult(lastrowid=22),
+        _FakeExecuteResult(rows=[_qr_row(qr_id=22)]),
+    ]
+    repo = QRCodeRepository(session)
+
+    _ = await repo.create(
+        user_id=100,
+        short_code="abc12346",
+        payload=QRCodeCreate(
+            name="Manual GA",
+            campaign_id=99,
+            destination_url="https://example.com/manual",
+            qr_type=QRType.url,
+            ga_type="MANUAL",
+            ga_measurement_id="G-ABCD1234",
+            ga_property_id="properties/should-clear",
+            status=QRCodeStatus.active,
+        ),
+    )
+
+    first_call_params = session.execute.await_args_list[0].args[1]
+    assert first_call_params["ga_type"] == "MANUAL"
+    assert first_call_params["ga_property_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_oauth_tracking_requires_ga_property_id() -> None:
+    session = AsyncMock()
+    repo = QRCodeRepository(session)
+
+    with pytest.raises(ValueError, match="ga_property_id is required"):
+        await repo.create(
+            user_id=100,
+            short_code="abc12347",
+            payload=QRCodeCreate(
+                name="OAuth GA",
+                campaign_id=99,
+                destination_url="https://example.com/oauth",
+                qr_type=QRType.url,
+                ga_type="OAUTH",
+                status=QRCodeStatus.active,
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_set_status_updates_status_field() -> None:
     session = AsyncMock()
     session.execute.return_value = _FakeExecuteResult(rowcount=1)
@@ -137,3 +186,16 @@ async def test_soft_delete_marks_deleted_at() -> None:
     statement = session.execute.await_args.args[0]
     assert "SET deleted_at = UTC_TIMESTAMP()" in str(statement)
 
+
+@pytest.mark.asyncio
+async def test_get_by_id_parses_design_config_json_string() -> None:
+    session = AsyncMock()
+    row = _qr_row(qr_id=23)
+    row["design_config"] = '{"color":"#123456"}'
+    session.execute.return_value = _FakeExecuteResult(rows=[row])
+    repo = QRCodeRepository(session)
+
+    qr = await repo.get_by_id(23)
+
+    assert qr is not None
+    assert qr.design_config == {"color": "#123456"}

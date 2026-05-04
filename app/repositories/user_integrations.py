@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +36,8 @@ class UserIntegrationRepository:
                 provider_name,
                 access_token,
                 refresh_token,
-                expires_at
+                expires_at,
+                granted_scopes
             FROM user_integrations
             WHERE user_id = :user_id
               AND provider_name = :provider_name
@@ -49,7 +53,7 @@ class UserIntegrationRepository:
             },
         )
         row = result.mappings().first()
-        return ProviderCredentialRecord.model_validate(dict(row)) if row else None
+        return ProviderCredentialRecord.model_validate(self._map_row(row)) if row else None
 
     async def list_by_user(self, user_id: int) -> list[ProviderCredentialRecord]:
         """List all provider connections for one user."""
@@ -62,7 +66,8 @@ class UserIntegrationRepository:
                 provider_name,
                 access_token,
                 refresh_token,
-                expires_at
+                expires_at,
+                granted_scopes
             FROM user_integrations
             WHERE user_id = :user_id
             ORDER BY id DESC
@@ -70,7 +75,7 @@ class UserIntegrationRepository:
         )
 
         result = await self.session.execute(statement, {"user_id": user_id})
-        return [ProviderCredentialRecord.model_validate(dict(row)) for row in result.mappings().all()]
+        return [ProviderCredentialRecord.model_validate(self._map_row(row)) for row in result.mappings().all()]
 
     async def upsert_credentials(
         self,
@@ -86,18 +91,21 @@ class UserIntegrationRepository:
                 provider_name,
                 access_token,
                 refresh_token,
-                expires_at
+                expires_at,
+                granted_scopes
             ) VALUES (
                 :user_id,
                 :provider_name,
                 :access_token,
                 :refresh_token,
-                :expires_at
+                :expires_at,
+                :granted_scopes
             )
             ON DUPLICATE KEY UPDATE
                 access_token = VALUES(access_token),
                 refresh_token = VALUES(refresh_token),
-                expires_at = VALUES(expires_at)
+                expires_at = VALUES(expires_at),
+                granted_scopes = VALUES(granted_scopes)
             """
         )
 
@@ -109,6 +117,7 @@ class UserIntegrationRepository:
                 "access_token": payload.access_token,
                 "refresh_token": payload.refresh_token,
                 "expires_at": payload.expires_at,
+                "granted_scopes": self._serialize_scopes(payload.granted_scopes),
             },
         )
         await self.session.flush()
@@ -143,4 +152,31 @@ class UserIntegrationRepository:
         )
         await self.session.flush()
         return (result.rowcount or 0) > 0
+
+    def _map_row(self, row: Mapping[str, object] | None) -> dict[str, object]:
+        if row is None:
+            return {}
+        payload = dict(row)
+        payload["granted_scopes"] = self._deserialize_scopes(payload.get("granted_scopes"))
+        return payload
+
+    def _serialize_scopes(self, scopes: list[str]) -> str | None:
+        if not scopes:
+            return None
+        return json.dumps(scopes)
+
+    def _deserialize_scopes(self, scopes_raw: object) -> list[str]:
+        if scopes_raw is None:
+            return []
+        if isinstance(scopes_raw, str):
+            try:
+                parsed = json.loads(scopes_raw)
+                if isinstance(parsed, list):
+                    return [str(scope) for scope in parsed]
+            except json.JSONDecodeError:
+                pass
+            return [scope for scope in scopes_raw.split(" ") if scope]
+        if isinstance(scopes_raw, list):
+            return [str(scope) for scope in scopes_raw]
+        return []
 

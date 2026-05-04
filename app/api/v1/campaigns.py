@@ -18,6 +18,7 @@ from app.services.campaign_calendar_sync_service import (
     CampaignCalendarSyncServiceError,
 )
 from app.services.campaign_service import CampaignService
+from app.services.campaign_service import CampaignValidationError
 from app.services.google_calendar_service import GoogleCalendarService, GoogleCalendarServiceError
 from app.repositories.user_integrations import UserIntegrationRepository
 
@@ -44,7 +45,6 @@ async def get_current_principal(
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
     x_user_id: int | None = Header(default=None),
     x_role: str | None = Header(default=None),
-    x_company_name: str | None = Header(default=None),
 ) -> Principal:
     """Resolve authenticated principal from JWT bearer token.
 
@@ -57,13 +57,12 @@ async def get_current_principal(
             payload = decode_access_token(credentials.credentials)
             subject = payload.get("sub")
             role = str(payload.get("role", "")).strip().lower()
-            if subject is None or role not in {"admin", "agency", "user"}:
+            if subject is None or role not in {"admin", "employee"}:
                 raise ValueError("Token payload missing required claims")
 
             return Principal(
                 user_id=int(subject),
                 role=role,
-                company_name=payload.get("company_name"),
             )
         except Exception as exc:  # pragma: no cover - concrete JWT errors are library-specific
             raise HTTPException(
@@ -78,9 +77,9 @@ async def get_current_principal(
     }
     if allow_header_fallback and x_user_id is not None and x_role:
         role = x_role.strip().lower()
-        if role not in {"admin", "agency", "user"}:
+        if role not in {"admin", "employee"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role header")
-        return Principal(user_id=x_user_id, role=role, company_name=x_company_name)
+        return Principal(user_id=x_user_id, role=role)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -114,6 +113,10 @@ async def get_campaign_calendar_sync_service(
     description="List campaigns visible to the current principal with RBAC and soft-delete controls.",
     response_description="Campaign list for requested owner scope.",
 )
+@router.get(
+    "/",
+    include_in_schema=False,
+)
 async def list_campaigns(
     owner_user_id: int | None = None,
     include_deleted: bool = False,
@@ -124,7 +127,14 @@ async def list_campaigns(
 ) -> list[CampaignRead]:
     """List campaigns visible within principal ownership scope."""
 
-    target_owner = owner_user_id if owner_user_id is not None else principal.user_id
+    # If owner_user_id is explicitly provided, use it. Otherwise:
+    # - admins should see all campaigns by default (owner scope is not applied)
+    # - employees should be scoped to their own user_id
+    target_owner = (
+        owner_user_id
+        if owner_user_id is not None
+        else (None if principal.role == "admin" else principal.user_id)
+    )
     include_deleted_allowed = _resolve_include_deleted(principal, include_deleted)
 
     try:
@@ -179,6 +189,12 @@ async def get_campaign(
     description="Create a campaign for the principal or a delegated owner when permitted.",
     response_description="Created campaign payload.",
 )
+@router.post(
+    "/",
+    response_model=CampaignRead,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
 async def create_campaign(
     payload: CampaignCreate,
     owner_user_id: int | None = None,
@@ -193,6 +209,8 @@ async def create_campaign(
             payload,
             owner_user_id=owner_user_id,
         )
+    except CampaignValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RBACError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
@@ -214,6 +232,8 @@ async def update_campaign(
 
     try:
         campaign = await service.update_campaign(principal, campaign_id, payload)
+    except CampaignValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RBACError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
