@@ -96,10 +96,26 @@ def _with_retry_attempt(payload: dict[str, Any], attempt: int) -> dict[str, Any]
 async def _insert_scan_log(session: AsyncSession, payload: ScanLogEnqueueMessage) -> None:
     """Insert one row into scan_logs from a validated queue payload."""
 
+    # Look up current qr_configurations.id from qr_id
+    config_result = await session.execute(
+        text(
+            """
+            SELECT id FROM qr_configurations
+            WHERE qr_id = :qr_id AND is_current = 1
+            LIMIT 1
+            """
+        ),
+        {"qr_id": payload.qr_id},
+    )
+    qr_config_id = config_result.scalar()
+
+    if qr_config_id is None:
+        raise ValueError(f"No current qr_configurations found for qr_id={payload.qr_id}")
+
     statement = text(
         """
         INSERT INTO scan_logs (
-            qr_id,
+            qr_configurations_id,
             scanned_at,
             ip_address,
             user_agent,
@@ -110,7 +126,7 @@ async def _insert_scan_log(session: AsyncSession, payload: ScanLogEnqueueMessage
             city,
             referer
         ) VALUES (
-            :qr_id,
+            :qr_config_id,
             :scanned_at,
             :ip_address,
             :user_agent,
@@ -128,7 +144,7 @@ async def _insert_scan_log(session: AsyncSession, payload: ScanLogEnqueueMessage
     await session.execute(
         statement,
         {
-            "qr_id": payload.qr_id,
+            "qr_config_id": qr_config_id,
             "scanned_at": scan.scanned_at,
             "ip_address": scan.ip_address,
             "user_agent": scan.user_agent,

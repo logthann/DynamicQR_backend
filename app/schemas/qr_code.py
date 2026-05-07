@@ -36,6 +36,7 @@ class QRCodeBase(BaseModel):
     """Common QR fields shared across create and update payloads."""
 
     name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
     campaign_id: int | None = None
     destination_url: HttpUrl
     qr_type: QRType
@@ -69,6 +70,7 @@ class QRCodeUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
     campaign_id: int | None = None
     destination_url: HttpUrl | None = None
     qr_type: QRType | None = None
@@ -128,6 +130,7 @@ class QRCodeListItem(BaseModel):
     user_id: int
     short_code: str = Field(min_length=4, max_length=32)
     name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=1000)
     destination_url: HttpUrl
     qr_type: QRType
     design_config: dict[str, Any] | None = None

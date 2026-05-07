@@ -25,3 +25,14 @@ redis>=5.2,<6.0
 authlib>=1.4,<2.0
 python-dotenv>=1.0,<2.0
 
+# Google Analytics Data API
+google-analytics-data>=0.18.0,<1.0
+
+# Google Auth and API clients
+google-auth>=2.0,<3.0
+google-auth-oauthlib>=1.0,<2.0
+google-auth-httplib2>=0.1,<1.0
+
+# IP Geolocation (MaxMind GeoIP2)
+geoip2>=4.8,<5.0
+

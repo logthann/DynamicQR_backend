@@ -84,8 +84,9 @@ async def test_list_by_user_applies_campaign_and_status_filters() -> None:
 async def test_create_includes_campaign_linkage_and_status() -> None:
     session = AsyncMock()
     session.execute.side_effect = [
-        _FakeExecuteResult(lastrowid=21),
-        _FakeExecuteResult(rows=[_qr_row(qr_id=21)]),
+        _FakeExecuteResult(lastrowid=21),  # INSERT into qr_codes
+        _FakeExecuteResult(lastrowid=1),   # INSERT into qr_configurations
+        _FakeExecuteResult(rows=[_qr_row(qr_id=21)]),  # SELECT via get_by_id
     ]
     repo = QRCodeRepository(session)
 
@@ -113,8 +114,9 @@ async def test_create_includes_campaign_linkage_and_status() -> None:
 async def test_create_manual_tracking_forces_ga_property_id_null() -> None:
     session = AsyncMock()
     session.execute.side_effect = [
-        _FakeExecuteResult(lastrowid=22),
-        _FakeExecuteResult(rows=[_qr_row(qr_id=22)]),
+        _FakeExecuteResult(lastrowid=22),  # INSERT into qr_codes
+        _FakeExecuteResult(lastrowid=1),   # INSERT into qr_configurations
+        _FakeExecuteResult(rows=[_qr_row(qr_id=22)]),  # SELECT via get_by_id
     ]
     repo = QRCodeRepository(session)
 
@@ -133,9 +135,9 @@ async def test_create_manual_tracking_forces_ga_property_id_null() -> None:
         ),
     )
 
-    first_call_params = session.execute.await_args_list[0].args[1]
-    assert first_call_params["ga_type"] == "MANUAL"
-    assert first_call_params["ga_property_id"] is None
+    config_call_params = session.execute.await_args_list[1].args[1]
+    assert config_call_params["ga_type"] == "MANUAL"
+    assert config_call_params["ga_property_id"] is None
 
 
 @pytest.mark.asyncio

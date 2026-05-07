@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from fastapi import Request
 
 from app.schemas.redirect import RedirectScanMetadata
+from app.services.geolocation_service import parse_ip_location
 
 
 def _extract_client_ip(headers: Mapping[str, str], fallback_ip: str | None) -> str | None:
@@ -74,14 +75,17 @@ def extract_scan_metadata(request: Request) -> RedirectScanMetadata:
     user_agent = headers.get("user-agent")
     device_type, os_name, browser = _parse_user_agent(user_agent)
 
+    # Lookup country and city from IP
+    country, city = parse_ip_location(client_ip)
+
     return RedirectScanMetadata(
         ip_address=client_ip,
         user_agent=user_agent,
         device_type=device_type,
         os=os_name,
         browser=browser,
-        country=None,
-        city=None,
+        country=country,
+        city=city,
         referer=headers.get("referer"),
     )
 

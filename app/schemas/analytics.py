@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,4 +35,85 @@ class AnalyticsSummaryResponse(BaseModel):
     total_scans: int = Field(ge=0)
     unique_visitors: int = Field(ge=0)
     rows: list[AnalyticsSummaryRow]
+
+
+# Campaign Analytics Schemas
+
+class CampaignKPISummaryResponse(BaseModel):
+    """KPI summary for a campaign including scan logs and GA4 data."""
+    
+    campaign_id: int
+    total_scans: int = Field(ge=0)
+    active_users_ga4: int = Field(ge=0)
+    conversion_rate: float = Field(ge=0)
+    avg_session_duration: float = Field(ge=0)
+
+
+class HourlyScanDataPoint(BaseModel):
+    """Single data point for hourly scan chart."""
+    
+    hour: datetime
+    mobile: int = Field(ge=0)
+    desktop: int = Field(ge=0)
+    tablet: int = Field(ge=0)
+    scans: int = Field(ge=0)
+
+
+class HourlyScansResponse(BaseModel):
+    """Hourly scan chart data for a campaign."""
+    
+    campaign_id: int
+    data: list[HourlyScanDataPoint]
+
+
+class GA4RealtimeDataPoint(BaseModel):
+    """Single data point for GA4 real-time chart."""
+    
+    time_label: str
+    active_users: int = Field(ge=0)
+
+
+class GA4RealtimeResponse(BaseModel):
+    """GA4 real-time chart data for a campaign."""
+    
+    campaign_id: int
+    data: list[GA4RealtimeDataPoint]
+
+
+class ScanLogEntry(BaseModel):
+    """Single scan log entry."""
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: int
+    scanned_at: datetime
+    ip_address: str | None
+    device_type: str | None
+    city: str | None
+
+
+class ScanLogsResponse(BaseModel):
+    """Paginated scan logs for a campaign."""
+    
+    campaign_id: int
+    page: int = Field(ge=1)
+    limit: int = Field(ge=1, le=1000)
+    total: int = Field(ge=0)
+    logs: list[ScanLogEntry]
+
+
+class GA4InsightEntry(BaseModel):
+    """Single GA4 insight entry."""
+    
+    page_path: str
+    session_source: str
+    device_category: str
+    engagement_time: float = Field(ge=0)
+
+
+class GA4InsightsResponse(BaseModel):
+    """GA4 insights data for a campaign."""
+    
+    campaign_id: int
+    insights: list[GA4InsightEntry]
 

@@ -238,8 +238,10 @@ class DashboardService:
                 COUNT(sl.id) AS total_scans,
                 COUNT(DISTINCT COALESCE(sl.ip_address, CONCAT('unknown-', sl.id))) AS unique_users
             FROM scan_logs sl
+            JOIN qr_configurations qc
+              ON qc.id = sl.qr_configurations_id
             JOIN qr_codes q
-              ON q.id = sl.qr_id
+              ON q.id = qc.qr_id
              AND q.deleted_at IS NULL
             JOIN users owner
               ON owner.id = q.user_id
@@ -331,8 +333,11 @@ class DashboardService:
             LEFT JOIN qr_codes q
               ON q.campaign_id = c.id
              AND q.deleted_at IS NULL
+            LEFT JOIN qr_configurations qc
+              ON qc.qr_id = q.id
+             AND qc.is_current = 1
             LEFT JOIN scan_logs sl
-              ON sl.qr_id = q.id
+              ON sl.qr_configurations_id = qc.id
              AND sl.scanned_at >= :start_utc
              AND sl.scanned_at < :end_utc
             WHERE c.deleted_at IS NULL
