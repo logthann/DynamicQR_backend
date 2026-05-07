@@ -453,14 +453,18 @@ async def get_user_detail(
     qr_codes_sql = """
         SELECT
             q.id,
-            q.name,
+            COALESCE(cfg.name, CONCAT('QR #', q.id)) as name,
             COALESCE(s.total_scans, 0) as scans,
             q.created_at
         FROM qr_codes q
+        LEFT JOIN qr_configurations cfg
+            ON cfg.qr_id = q.id
+            AND cfg.is_current = 1
         LEFT JOIN (
-            SELECT qr_id, COUNT(*) as total_scans
-            FROM scan_logs
-            GROUP BY qr_id
+            SELECT qc.qr_id, COUNT(*) as total_scans
+            FROM scan_logs sl
+            JOIN qr_configurations qc ON qc.id = sl.qr_configurations_id
+            GROUP BY qc.qr_id
         ) s ON s.qr_id = q.id
         WHERE q.user_id = :user_id AND q.deleted_at IS NULL
         ORDER BY q.created_at DESC
