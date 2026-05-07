@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -155,3 +155,199 @@ class ScanLogRepository:
         logs = [dict(row._mapping) for row in data_result.fetchall()]
 
         return logs, total
+
+    async def get_campaign_qr_comparison_totals(
+        self,
+        campaign_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        """Return per-QR total scans and unique scans in date range."""
+
+        statement = text(
+            """
+            SELECT
+                q.id AS qr_id,
+                COALESCE(qc.name, q.short_code) AS qr_name,
+                c.name AS campaign_name,
+                COALESCE(qc.destination_url, '') AS destination_url,
+                COUNT(sl.id) AS total_scans,
+                COUNT(DISTINCT COALESCE(sl.ip_address, CONCAT('scan-', sl.id))) AS unique_scans
+            FROM qr_codes q
+            INNER JOIN campaigns c ON c.id = q.campaign_id
+            LEFT JOIN qr_configurations qc
+                ON qc.qr_id = q.id
+               AND qc.is_current = 1
+            LEFT JOIN scan_logs sl
+                ON sl.qr_id = q.id
+               AND sl.scanned_at >= :start_dt
+               AND sl.scanned_at < :end_dt
+            WHERE q.campaign_id = :campaign_id
+              AND q.deleted_at IS NULL
+              AND c.deleted_at IS NULL
+            GROUP BY q.id, qr_name, campaign_name, destination_url
+            ORDER BY q.id ASC
+            """
+        )
+        end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        result = await self.session.execute(
+            statement,
+            {
+                "campaign_id": campaign_id,
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+            },
+        )
+        return [dict(row._mapping) for row in result.fetchall()]
+
+    async def get_campaign_qr_comparison_totals_for_previous_period(
+        self,
+        campaign_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> dict[int, int]:
+        """Return per-QR total scans for previous period of equal length."""
+
+        period_days = (end_date - start_date).days + 1
+        prev_end = start_date - timedelta(days=1)
+        prev_start = prev_end - timedelta(days=period_days - 1)
+        prev_start_dt = datetime.combine(prev_start, datetime.min.time())
+        prev_end_dt = datetime.combine(prev_end + timedelta(days=1), datetime.min.time())
+
+        statement = text(
+            """
+            SELECT
+                q.id AS qr_id,
+                COUNT(sl.id) AS total_scans
+            FROM qr_codes q
+            LEFT JOIN scan_logs sl
+                ON sl.qr_id = q.id
+               AND sl.scanned_at >= :start_dt
+               AND sl.scanned_at < :end_dt
+            WHERE q.campaign_id = :campaign_id
+              AND q.deleted_at IS NULL
+            GROUP BY q.id
+            """
+        )
+        result = await self.session.execute(
+            statement,
+            {
+                "campaign_id": campaign_id,
+                "start_dt": prev_start_dt,
+                "end_dt": prev_end_dt,
+            },
+        )
+        return {int(row.qr_id): int(row.total_scans) for row in result.fetchall()}
+
+    async def get_campaign_qr_sparkline(
+        self,
+        campaign_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> dict[int, list[int]]:
+        """Return per-QR daily scan counts between start_date and end_date."""
+
+        statement = text(
+            """
+            SELECT
+                q.id AS qr_id,
+                DATE(sl.scanned_at) AS scan_date,
+                COUNT(sl.id) AS scans
+            FROM qr_codes q
+            LEFT JOIN scan_logs sl
+                ON sl.qr_id = q.id
+               AND sl.scanned_at >= :start_dt
+               AND sl.scanned_at < :end_dt
+            WHERE q.campaign_id = :campaign_id
+              AND q.deleted_at IS NULL
+            GROUP BY q.id, DATE(sl.scanned_at)
+            """
+        )
+        end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        result = await self.session.execute(
+            statement,
+            {
+                "campaign_id": campaign_id,
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+            },
+        )
+        rows = result.fetchall()
+
+        index_by_date: dict[date, int] = {}
+        cursor = start_date
+        i = 0
+        while cursor <= end_date:
+            index_by_date[cursor] = i
+            i += 1
+            cursor += timedelta(days=1)
+
+        sparkline_map: dict[int, list[int]] = {}
+        for row in rows:
+            qr_id = int(row.qr_id)
+            if qr_id not in sparkline_map:
+                sparkline_map[qr_id] = [0] * len(index_by_date)
+            if row.scan_date is None:
+                continue
+            day = row.scan_date if isinstance(row.scan_date, date) else row.scan_date.date()
+            if day in index_by_date:
+                sparkline_map[qr_id][index_by_date[day]] = int(row.scans)
+
+        return sparkline_map
+
+    async def get_campaign_qr_versions(
+        self,
+        campaign_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> dict[int, list[dict[str, Any]]]:
+        """Return configuration versions and scan counts in range for each QR."""
+
+        statement = text(
+            """
+            SELECT
+                q.id AS qr_id,
+                qc.id AS config_id,
+                qc.version_number,
+                qc.name,
+                qc.destination_url,
+                qc.created_at AS active_start,
+                LEAD(qc.created_at) OVER (PARTITION BY q.id ORDER BY qc.version_number) AS active_end,
+                qc.is_current,
+                COUNT(sl.id) AS total_scans
+            FROM qr_codes q
+            INNER JOIN qr_configurations qc ON qc.qr_id = q.id
+            LEFT JOIN scan_logs sl
+                ON sl.qr_config_id = qc.id
+               AND sl.scanned_at >= :start_dt
+               AND sl.scanned_at < :end_dt
+            WHERE q.campaign_id = :campaign_id
+              AND q.deleted_at IS NULL
+            GROUP BY
+                q.id,
+                qc.id,
+                qc.version_number,
+                qc.name,
+                qc.destination_url,
+                qc.created_at,
+                qc.is_current
+            ORDER BY q.id ASC, qc.version_number ASC
+            """
+        )
+        end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        result = await self.session.execute(
+            statement,
+            {
+                "campaign_id": campaign_id,
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+            },
+        )
+        version_map: dict[int, list[dict[str, Any]]] = {}
+        for row in result.fetchall():
+            qr_id = int(row.qr_id)
+            version_map.setdefault(qr_id, []).append(dict(row._mapping))
+        return version_map

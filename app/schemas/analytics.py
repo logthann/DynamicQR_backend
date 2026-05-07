@@ -117,3 +117,43 @@ class GA4InsightsResponse(BaseModel):
     campaign_id: int
     insights: list[GA4InsightEntry]
 
+
+class QRVersionActivePeriod(BaseModel):
+    """Active period for one QR configuration version."""
+
+    start: datetime
+    end: datetime | None
+
+
+class QRVersionComparison(BaseModel):
+    """Version-level scan metrics for campaign comparison."""
+
+    version: str
+    title: str
+    active_period: QRVersionActivePeriod
+    destination_url: str
+    total_scans: int = Field(ge=0)
+    scan_diff: int | None
+    status: str
+
+
+class CampaignComparisonQRCode(BaseModel):
+    """Campaign comparison payload for one QR code."""
+
+    id: str
+    name: str
+    campaign: str
+    destination_url: str
+    total_scans: int = Field(ge=0)
+    unique_scans: int = Field(ge=0)
+    growth: float | None
+    sparkline: list[int]
+    versions: list[QRVersionComparison]
+
+
+class CampaignComparisonResponse(BaseModel):
+    """Comparison response for all QR codes in a campaign."""
+
+    campaign_id: int
+    qr_codes: list[CampaignComparisonQRCode]
+

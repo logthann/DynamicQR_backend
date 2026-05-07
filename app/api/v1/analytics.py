@@ -17,6 +17,7 @@ from app.repositories.scan_logs import ScanLogRepository
 from app.repositories.user_integrations import UserIntegrationRepository
 from app.schemas.analytics import (
     AnalyticsSummaryResponse,
+    CampaignComparisonResponse,
     CampaignKPISummaryResponse,
     GA4InsightsResponse,
     GA4RealtimeResponse,
@@ -96,6 +97,36 @@ async def get_qr_analytics(
 
 
 # Campaign Analytics Endpoints
+
+@router.get(
+    "/campaign/{campaign_id}/comparison",
+    response_model=CampaignComparisonResponse,
+    summary="Get campaign QR comparison",
+    description="Compare campaign QR performance by totals, growth, sparkline, and version history.",
+    response_description="QR comparison analytics for a campaign.",
+    responses={
+        400: {"model": ApiErrorResponse},
+        401: {"model": ApiErrorResponse},
+        403: {"model": ApiErrorResponse},
+        404: {"model": ApiErrorResponse},
+    },
+)
+async def get_campaign_comparison(
+    campaign_id: int,
+    start_date: date = Query(..., description="Start date in YYYY-MM-DD"),
+    end_date: date = Query(..., description="End date in YYYY-MM-DD"),
+    principal: Principal = Depends(get_current_principal),
+    service: CampaignAnalyticsService = Depends(get_campaign_analytics_service),
+) -> CampaignComparisonResponse:
+    """Get campaign-level comparison for all QR codes in date range."""
+
+    try:
+        return await service.get_campaign_comparison(campaign_id, start_date, end_date, principal)
+    except RBACError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except CampaignAnalyticsServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
 
 @router.get(
     "/campaign/{campaign_id}/summary",

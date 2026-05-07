@@ -11,9 +11,14 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 
 from app.api.v1.campaigns import get_current_principal
-from app.api.v1.analytics import get_analytics_service
+from app.api.v1.analytics import get_analytics_service, get_campaign_analytics_service
 from app.core.rbac import Principal
-from app.schemas.analytics import AnalyticsSummaryResponse, AnalyticsSummaryRow
+from app.schemas.analytics import (
+    AnalyticsSummaryResponse,
+    AnalyticsSummaryRow,
+    CampaignComparisonQRCode,
+    CampaignComparisonResponse,
+)
 from app.schemas.qr_code import QRCodeRead, QRCodeStatus, QRType
 from app.services.analytics_service import AnalyticsService
 
@@ -36,6 +41,32 @@ class _StubAnalyticsService:
             rows=[
                 AnalyticsSummaryRow(summary_date=start_date, total_scans=10, unique_visitors=8),
                 AnalyticsSummaryRow(summary_date=end_date, total_scans=15, unique_visitors=12),
+            ],
+        )
+
+
+class _StubCampaignAnalyticsService:
+    async def get_campaign_comparison(
+        self,
+        campaign_id: int,
+        start_date: date,
+        end_date: date,
+        principal: Principal,
+    ) -> CampaignComparisonResponse:
+        return CampaignComparisonResponse(
+            campaign_id=campaign_id,
+            qr_codes=[
+                CampaignComparisonQRCode(
+                    id="10",
+                    name="Landing QR",
+                    campaign="Summer 2026",
+                    destination_url="https://example.com/current",
+                    total_scans=120,
+                    unique_scans=80,
+                    growth=20.0,
+                    sparkline=[10, 12, 15, 20, 30, 18, 15],
+                    versions=[],
+                )
             ],
         )
 
@@ -119,5 +150,24 @@ async def test_get_qr_analytics_allows_admin_for_any_qr(app: FastAPI, async_clie
 
     assert response.status_code == 200
     assert response.json()["qr_id"] == 11
+
+
+@pytest.mark.asyncio
+async def test_get_campaign_comparison_returns_payload(app: FastAPI, async_client: AsyncClient) -> None:
+    app.dependency_overrides[get_campaign_analytics_service] = lambda: _StubCampaignAnalyticsService()
+    app.dependency_overrides[get_current_principal] = lambda: Principal(user_id=7, role="employee")
+
+    try:
+        response = await async_client.get(
+            "/api/v1/analytics/campaign/3/comparison?start_date=2026-05-01&end_date=2026-05-07"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["campaign_id"] == 3
+    assert len(body["qr_codes"]) == 1
+    assert body["qr_codes"][0]["id"] == "10"
 
 

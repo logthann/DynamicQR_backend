@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.core.rbac import Principal, RBACError
@@ -10,9 +10,13 @@ from app.repositories.campaigns import CampaignRepository
 from app.repositories.scan_logs import ScanLogRepository
 from app.repositories.user_integrations import UserIntegrationRepository
 from app.schemas.analytics import (
+    CampaignComparisonQRCode,
+    CampaignComparisonResponse,
     CampaignKPISummaryResponse,
     GA4InsightsResponse,
     GA4RealtimeResponse,
+    QRVersionActivePeriod,
+    QRVersionComparison,
     HourlyScansResponse,
     ScanLogEntry,
     ScanLogsResponse,
@@ -191,6 +195,82 @@ class CampaignAnalyticsService:
 
         except GA4ServiceError:
             return GA4InsightsResponse(campaign_id=campaign_id, insights=[])
+
+    async def get_campaign_comparison(
+        self,
+        campaign_id: int,
+        start_date: date,
+        end_date: date,
+        principal: Principal,
+    ) -> CampaignComparisonResponse:
+        """Build campaign QR comparison payload for frontend analytics view."""
+
+        if end_date < start_date:
+            raise CampaignAnalyticsServiceError("end_date must be greater than or equal to start_date")
+
+        await self._ensure_campaign_access(campaign_id, principal)
+
+        totals = await self.scan_log_repo.get_campaign_qr_comparison_totals(
+            campaign_id, start_date, end_date
+        )
+        previous_totals = await self.scan_log_repo.get_campaign_qr_comparison_totals_for_previous_period(
+            campaign_id, start_date, end_date
+        )
+        sparkline_map = await self.scan_log_repo.get_campaign_qr_sparkline(
+            campaign_id, start_date, end_date
+        )
+        versions_map = await self.scan_log_repo.get_campaign_qr_versions(
+            campaign_id, start_date, end_date
+        )
+
+        qr_codes: list[CampaignComparisonQRCode] = []
+        for row in totals:
+            qr_id = int(row["qr_id"])
+            total_scans = int(row["total_scans"] or 0)
+            previous_total = int(previous_totals.get(qr_id, 0))
+            growth: float | None = None
+            if previous_total > 0:
+                growth = round(((total_scans - previous_total) / previous_total) * 100, 2)
+
+            version_rows = versions_map.get(qr_id, [])
+            previous_version_scans: int | None = None
+            versions: list[QRVersionComparison] = []
+            for version_row in version_rows:
+                version_total = int(version_row["total_scans"] or 0)
+                scan_diff = None if previous_version_scans is None else version_total - previous_version_scans
+                previous_version_scans = version_total
+                versions.append(
+                    QRVersionComparison(
+                        version=f"v{version_row['version_number']}",
+                        title=str(version_row["name"] or ""),
+                        active_period=QRVersionActivePeriod(
+                            start=version_row["active_start"],
+                            end=version_row["active_end"],
+                        ),
+                        destination_url=str(version_row["destination_url"] or ""),
+                        total_scans=version_total,
+                        scan_diff=scan_diff,
+                        status="current" if int(version_row["is_current"] or 0) == 1 else "archived",
+                    )
+                )
+
+            qr_codes.append(
+                CampaignComparisonQRCode(
+                    id=str(qr_id),
+                    name=str(row["qr_name"] or ""),
+                    campaign=str(row["campaign_name"] or ""),
+                    destination_url=str(row["destination_url"] or ""),
+                    total_scans=total_scans,
+                    unique_scans=int(row["unique_scans"] or 0),
+                    growth=growth,
+                    sparkline=sparkline_map.get(
+                        qr_id, [0] * ((end_date - start_date).days + 1)
+                    ),
+                    versions=versions,
+                )
+            )
+
+        return CampaignComparisonResponse(campaign_id=campaign_id, qr_codes=qr_codes)
 
     async def _ensure_campaign_access(self, campaign_id: int, principal: Principal) -> None:
         """Ensure the principal has access to the campaign."""
