@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,19 +48,14 @@ def create_application() -> FastAPI:
         description="Backend API for Dynamic QR campaigns and analytics.",
     )
 
-    allow_origins_env = os.getenv("CORS_ALLOW_ORIGINS")
-    allow_origins = (
-        [origin.strip() for origin in allow_origins_env.split(",") if origin.strip()]
-        if allow_origins_env
-        else ["http://localhost:3000", "http://127.0.0.1:3000"]
-    )
+    settings = get_settings()
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=settings.cors_allow_origins,
+        allow_credentials=settings.cors_allow_credentials,
+        allow_methods=settings.cors_allow_methods,
+        allow_headers=settings.cors_allow_headers,
     )
 
     api_v1_router = APIRouter(prefix="/api/v1")
@@ -87,7 +81,6 @@ def create_application() -> FastAPI:
     @app.on_event("startup")
     async def _start_embedded_scan_worker_if_needed() -> None:
         logger.info("Application startup hook running")
-        settings = get_settings()
         queue_backend = settings.queue_backend.lower().strip()
         if settings.app_env != "local" or queue_backend != "memory":
             return

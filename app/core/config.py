@@ -3,9 +3,14 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+LOCAL_ENV_NAMES = {"local", "dev", "development", "test", "testing"}
 
 
 class Settings(BaseSettings):
@@ -90,6 +95,43 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = Field(default=True, alias="CORS_ALLOW_CREDENTIALS")
     cors_allow_methods: list[str] = Field(default=["*"], alias="CORS_ALLOW_METHODS")
     cors_allow_headers: list[str] = Field(default=["*"], alias="CORS_ALLOW_HEADERS")
+
+    @field_validator(
+        "cors_allow_origins",
+        "cors_allow_methods",
+        "cors_allow_headers",
+        mode="before",
+    )
+    @classmethod
+    def _split_csv_settings(cls, value: object) -> object:
+        """Support comma-separated env values for list settings."""
+
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _validate_deploy_safe_urls(self) -> "Settings":
+        """Prevent non-local deployments from accidentally using localhost URLs."""
+
+        if self.app_env.lower().strip() in LOCAL_ENV_NAMES:
+            return self
+
+        self._reject_local_url("GOOGLE_REDIRECT_URI", self.google_redirect_uri)
+        for origin in self.cors_allow_origins:
+            self._reject_local_url("CORS_ALLOW_ORIGINS", origin)
+        return self
+
+    @staticmethod
+    def _reject_local_url(setting_name: str, value: str | None) -> None:
+        if not value:
+            return
+
+        hostname = urlparse(value).hostname
+        if hostname in LOCAL_HOSTNAMES:
+            raise ValueError(
+                f"{setting_name} must not point to localhost outside local/test environments",
+            )
 
 
 @lru_cache(maxsize=1)

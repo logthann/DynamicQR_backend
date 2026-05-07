@@ -47,13 +47,24 @@ class _StubQueueClient(QueueClient):
 class _FakeSession:
     def __init__(self, *, fail_on_execute: bool = False) -> None:
         self.fail_on_execute = fail_on_execute
-        self.executed = False
+        self.execute_count = 0
         self.committed = False
 
-    async def execute(self, statement: Any, params: dict[str, Any]) -> None:
+    @property
+    def executed(self) -> bool:
+        return self.execute_count > 0
+
+    async def execute(self, statement: Any, params: dict[str, Any]) -> Any:
         if self.fail_on_execute:
             raise RuntimeError("db unavailable")
-        self.executed = True
+        self.execute_count += 1
+
+        class _ScalarResult:
+            @staticmethod
+            def scalar() -> int:
+                return 101
+
+        return _ScalarResult()
 
     async def commit(self) -> None:
         self.committed = True
