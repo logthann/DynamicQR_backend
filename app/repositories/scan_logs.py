@@ -179,7 +179,7 @@ class ScanLogRepository:
                 ON qc.qr_id = q.id
                AND qc.is_current = 1
             LEFT JOIN scan_logs sl
-                ON sl.qr_id = q.id
+                ON sl.qr_configurations_id = qc.id
                AND sl.scanned_at >= :start_dt
                AND sl.scanned_at < :end_dt
             WHERE q.campaign_id = :campaign_id
@@ -221,8 +221,11 @@ class ScanLogRepository:
                 q.id AS qr_id,
                 COUNT(sl.id) AS total_scans
             FROM qr_codes q
+            INNER JOIN qr_configurations qc
+                ON qc.qr_id = q.id
+               AND qc.is_current = 1
             LEFT JOIN scan_logs sl
-                ON sl.qr_id = q.id
+                ON sl.qr_configurations_id = qc.id
                AND sl.scanned_at >= :start_dt
                AND sl.scanned_at < :end_dt
             WHERE q.campaign_id = :campaign_id
@@ -255,8 +258,11 @@ class ScanLogRepository:
                 DATE(sl.scanned_at) AS scan_date,
                 COUNT(sl.id) AS scans
             FROM qr_codes q
+            INNER JOIN qr_configurations qc
+                ON qc.qr_id = q.id
+               AND qc.is_current = 1
             LEFT JOIN scan_logs sl
-                ON sl.qr_id = q.id
+                ON sl.qr_configurations_id = qc.id
                AND sl.scanned_at >= :start_dt
                AND sl.scanned_at < :end_dt
             WHERE q.campaign_id = :campaign_id
@@ -320,7 +326,7 @@ class ScanLogRepository:
             FROM qr_codes q
             INNER JOIN qr_configurations qc ON qc.qr_id = q.id
             LEFT JOIN scan_logs sl
-                ON sl.qr_config_id = qc.id
+                ON sl.qr_configurations_id = qc.id
                AND sl.scanned_at >= :start_dt
                AND sl.scanned_at < :end_dt
             WHERE q.campaign_id = :campaign_id
