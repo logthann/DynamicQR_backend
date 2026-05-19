@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.config import get_settings
 from app.repositories.user_integrations import UserIntegrationRepository
 from app.schemas.analytics import GA4InsightEntry, GA4RealtimeDataPoint
+from app.schemas.integrations import IntegrationProvider
 from app.services.cache_service import CacheService
 
 
@@ -22,6 +22,19 @@ class GA4Service:
         self.user_integration_repo = user_integration_repo
         self.settings = get_settings()
         self.cache_service = cache_service or CacheService()
+
+    @staticmethod
+    def _parse_time_label_minutes(time_label: str) -> int:
+        """Parse time_label to minutes for sorting. 'Now' = 0, '5m ago' = 5, etc."""
+        if time_label == "Now":
+            return 0
+        if "m ago" in time_label:
+            try:
+                minutes_str = time_label.replace("m ago", "").strip()
+                return int(minutes_str)
+            except (ValueError, AttributeError):
+                return 999
+        return 999
 
     async def get_active_users(
         self,
@@ -114,7 +127,7 @@ class GA4Service:
 
         # Get user's Google OAuth token
         integration = await self.user_integration_repo.get_by_user_and_provider(
-            user_id, "google_analytics"
+            user_id, IntegrationProvider.google_analytics
         )
         if not integration:
             raise GA4ServiceError("Google Analytics integration not found")
@@ -164,8 +177,8 @@ class GA4Service:
                 )
             
             # Sort by time (oldest first)
-            data_points.sort(key=lambda x: int(x.time_label.replace("m ago", "").replace("Now", "0")))
-            
+            data_points.sort(key=lambda x: self._parse_time_label_minutes(x.time_label))
+
             result = data_points[-minutes_back:]  # Return last N minutes
             
             # Cache the result
@@ -198,7 +211,7 @@ class GA4Service:
 
         # Get user's Google OAuth token
         integration = await self.user_integration_repo.get_by_user_and_provider(
-            user_id, "google_analytics"
+            user_id, IntegrationProvider.google_analytics
         )
         if not integration:
             raise GA4ServiceError("Google Analytics integration not found")

@@ -76,16 +76,28 @@ class ScanLogRepository:
             hourly_data[hour][device_type] = scans
             hourly_data[hour]["scans"] += scans
 
-        # Convert to list of dicts
+        # Generate all 24 hours in the date range to ensure complete chart display
+        current = start_date.replace(minute=0, second=0, microsecond=0)
+        end = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        all_hours = []
+        while current <= end:
+            hour_str = current.strftime('%Y-%m-%d %H:00:00')
+            if hour_str not in hourly_data:
+                hourly_data[hour_str] = {"mobile": 0, "desktop": 0, "tablet": 0, "scans": 0}
+            all_hours.append(hour_str)
+            current += timedelta(hours=1)
+
+        # Convert to list of dicts, preserving 24-hour sequence
         return [
             {
                 "hour": hour,
-                "mobile": data["mobile"],
-                "desktop": data["desktop"],
-                "tablet": data["tablet"],
-                "scans": data["scans"],
+                "mobile": hourly_data[hour]["mobile"],
+                "desktop": hourly_data[hour]["desktop"],
+                "tablet": hourly_data[hour]["tablet"],
+                "scans": hourly_data[hour]["scans"],
             }
-            for hour, data in sorted(hourly_data.items())
+            for hour in all_hours
         ]
 
     async def get_paginated_logs(

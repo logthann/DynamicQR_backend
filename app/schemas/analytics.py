@@ -73,11 +73,19 @@ class GA4RealtimeDataPoint(BaseModel):
     active_users: int = Field(ge=0)
 
 
+class GA4RealtimeAggregated(BaseModel):
+    """Aggregated GA4 real-time data for a campaign."""
+
+    total_active_users: int
+    data: list[GA4RealtimeDataPoint]
+
+
 class GA4RealtimeResponse(BaseModel):
     """GA4 real-time chart data for a campaign."""
     
     campaign_id: int
-    data: list[GA4RealtimeDataPoint]
+    aggregated: GA4RealtimeAggregated
+    sources: dict[str, GA4RealtimeAggregated]
 
 
 class ScanLogEntry(BaseModel):
@@ -156,4 +164,3 @@ class CampaignComparisonResponse(BaseModel):
 
     campaign_id: int
     qr_codes: list[CampaignComparisonQRCode]
-

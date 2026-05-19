@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
-from typing import Any
+from datetime import date, datetime
 
 from app.core.rbac import Principal, RBACError
 from app.repositories.campaigns import CampaignRepository
 from app.repositories.scan_logs import ScanLogRepository
 from app.repositories.user_integrations import UserIntegrationRepository
+from app.repositories.qr_codes import QRCodeRepository
 from app.schemas.analytics import (
     CampaignComparisonQRCode,
     CampaignComparisonResponse,
     CampaignKPISummaryResponse,
     GA4InsightsResponse,
     GA4RealtimeResponse,
+    GA4RealtimeAggregated,
+    GA4RealtimeDataPoint,
     QRVersionActivePeriod,
     QRVersionComparison,
     HourlyScansResponse,
@@ -40,12 +42,14 @@ class CampaignAnalyticsService:
         user_integration_repo: UserIntegrationRepository,
         ga4_service: GA4Service,
         cache_service: CacheService | None = None,
+        qr_code_repo: QRCodeRepository | None = None,
     ) -> None:
         self.campaign_repo = campaign_repo
         self.scan_log_repo = scan_log_repo
         self.user_integration_repo = user_integration_repo
         self.ga4_service = ga4_service
         self.cache_service = cache_service or CacheService()
+        self.qr_code_repo = qr_code_repo
 
     async def get_kpi_summary(
         self,
@@ -67,7 +71,7 @@ class CampaignAnalyticsService:
         if campaign_utm_name:
             try:
                 # Get user's GA4 property ID
-                property_id = await self._get_user_ga4_property_id(principal.user_id)
+                property_id = await self._get_user_ga4_property_id(principal.user_id, campaign_id)
                 if property_id:
                     active_users_ga4 = await self.ga4_service.get_active_users(
                         principal.user_id, property_id, campaign_utm_name
@@ -112,30 +116,134 @@ class CampaignAnalyticsService:
         principal: Principal,
         minutes_back: int = 30,
     ) -> GA4RealtimeResponse:
-        """Get GA4 real-time data for a campaign."""
+        """Get GA4 real-time data for a campaign, aggregating across its QR codes."""
         # Verify campaign access
         await self._ensure_campaign_access(campaign_id, principal)
 
-        # Get campaign UTM name
-        campaign_utm_name = await self._get_campaign_utm_name(campaign_id)
-        if not campaign_utm_name:
-            return GA4RealtimeResponse(campaign_id=campaign_id, data=[])
+        if not self.qr_code_repo:
+            raise CampaignAnalyticsServiceError("QRCodeRepository is required for get_ga4_realtime")
 
-        try:
-            # Get user's GA4 property ID
-            property_id = await self._get_user_ga4_property_id(principal.user_id)
-            if not property_id:
-                return GA4RealtimeResponse(campaign_id=campaign_id, data=[])
+        empty_response = GA4RealtimeResponse(
+            campaign_id=campaign_id,
+            aggregated=GA4RealtimeAggregated(total_active_users=0, data=[]),
+            sources={},
+        )
 
-            # Get real-time data
-            data = await self.ga4_service.get_realtime_data(
-                principal.user_id, property_id, campaign_utm_name, minutes_back
-            )
+        # Helper function for sorting time labels
+        def sort_time_label(time_label: str) -> int:
+            """Parse time_label to minutes for sorting. 'Now' = 0, '5m ago' = 5, etc."""
+            if time_label == "Now":
+                return 0
+            if "m ago" in time_label:
+                try:
+                    minutes_str = time_label.replace("m ago", "").strip()
+                    return int(minutes_str)
+                except (ValueError, AttributeError):
+                    return 999
+            return 999
 
-            return GA4RealtimeResponse(campaign_id=campaign_id, data=data)
+        # Fetch all QR codes for the campaign
+        qr_codes = await self.qr_code_repo.list_by_user(principal.user_id, campaign_id=campaign_id)
+        if not qr_codes:
+            return empty_response
 
-        except GA4ServiceError:
-            return GA4RealtimeResponse(campaign_id=campaign_id, data=[])
+        # Extract unique tracking combinations (ga_property_id, utm_campaign)
+        # Fallback to campaign defaults if QR code doesn't override them
+        campaign_context = await self.campaign_repo.get_by_id(campaign_id)
+        default_property_id = None
+        default_utm_campaign = None
+        if campaign_context:
+            default_property_id = campaign_context.ga_property_id
+            default_utm_campaign = campaign_context.name
+
+        if not default_property_id:
+             integration = await self.user_integration_repo.get_by_user_and_provider(
+                 principal.user_id, IntegrationProvider.google_analytics
+             )
+             if not integration:
+                 return empty_response
+
+        unique_combinations = {}
+        for qr in qr_codes:
+            # Skip if tracking is manually disabled or oauth is required but missing property
+            ga_type = qr.ga_type.value if hasattr(qr.ga_type, 'value') else qr.ga_type
+            if ga_type == 'MANUAL':
+                continue
+
+            prop_id = qr.ga_property_id or default_property_id
+            utm_camp = qr.utm_campaign or default_utm_campaign
+
+            if prop_id and utm_camp:
+                 combo_key = f"{prop_id}|{utm_camp}"
+                 if combo_key not in unique_combinations:
+                     unique_combinations[combo_key] = {
+                         'property_id': prop_id,
+                         'utm_campaign': utm_camp,
+                         'qr_codes': []
+                     }
+                 unique_combinations[combo_key]['qr_codes'].append(qr.name or qr.short_code)
+
+        if not unique_combinations:
+            return empty_response
+
+        # Fetch data for each unique combination and aggregate
+        aggregated_data_map: dict[str, int] = {}
+        total_active_users_all = 0
+        sources_data: dict[str, GA4RealtimeAggregated] = {}
+
+        for combo_key, info in unique_combinations.items():
+            try:
+                data_points = await self.ga4_service.get_realtime_data(
+                    principal.user_id, info['property_id'], info['utm_campaign'], minutes_back
+                )
+                
+                source_total_users = 0
+                source_data_map = {}
+
+                for point in data_points:
+                    time_label = point.time_label
+                    users = point.active_users
+                    
+                    # Accumulate for overall aggregation
+                    aggregated_data_map[time_label] = aggregated_data_map.get(time_label, 0) + users
+                    total_active_users_all += users
+                    
+                    # Accumulate for source breakdown
+                    source_data_map[time_label] = users
+                    source_total_users += users
+
+                # Format source data sorted by time
+                source_data_list = [
+                    GA4RealtimeDataPoint(time_label=tl, active_users=au)
+                    for tl, au in sorted(source_data_map.items(), key=lambda item: sort_time_label(item[0]))
+                ]
+                
+                # Use a combined name for the source if multiple QRs share the combination
+                source_name = ", ".join(info['qr_codes'])
+                sources_data[source_name] = GA4RealtimeAggregated(
+                    total_active_users=source_total_users,
+                    data=source_data_list
+                )
+
+            except GA4ServiceError:
+                # Log or handle error for a specific combination, but continue aggregating others
+                pass
+
+        # Format aggregated data sorted by time
+
+        aggregated_data_list = [
+            GA4RealtimeDataPoint(time_label=tl, active_users=au)
+            for tl, au in sorted(aggregated_data_map.items(), key=lambda item: sort_time_label(item[0]))
+        ]
+
+        return GA4RealtimeResponse(
+            campaign_id=campaign_id,
+            aggregated=GA4RealtimeAggregated(
+                total_active_users=total_active_users_all,
+                data=aggregated_data_list
+            ),
+            sources=sources_data
+        )
 
     async def get_scan_logs(
         self,
@@ -182,7 +290,7 @@ class CampaignAnalyticsService:
 
         try:
             # Get user's GA4 property ID
-            property_id = await self._get_user_ga4_property_id(principal.user_id)
+            property_id = await self._get_user_ga4_property_id(principal.user_id, campaign_id)
             if not property_id:
                 return GA4InsightsResponse(campaign_id=campaign_id, insights=[])
 
@@ -288,17 +396,17 @@ class CampaignAnalyticsService:
         campaign = await self.campaign_repo.get_by_id(campaign_id)
         return campaign.name if campaign else None
 
-    async def _get_user_ga4_property_id(self, user_id: int) -> str | None:
-        """Get the user's GA4 property ID from their integrations."""
-        # This is a simplified approach - in reality, you'd need to store
-        # the selected property ID per user or campaign
+    async def _get_user_ga4_property_id(self, user_id: int, campaign_id: int) -> str | None:
+        """Resolve GA4 property id with campaign-first precedence."""
+        campaign = await self.campaign_repo.get_by_id(campaign_id)
+        if campaign and campaign.ga_property_id:
+            return str(campaign.ga_property_id)
+
         integration = await self.user_integration_repo.get_by_user_and_provider(
             user_id, IntegrationProvider.google_analytics
         )
-        
         if not integration:
             return None
 
-        # For now, return a default property ID or extract from integration metadata
-        # In a real implementation, you'd store the selected property ID
-        return None  # Would return actual property ID
+        # Current integration schema stores tokens/scopes only; no property-id mapping.
+        return None

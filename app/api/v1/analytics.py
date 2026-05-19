@@ -51,9 +51,10 @@ async def get_campaign_analytics_service(
     user_integration_repo = UserIntegrationRepository(session)
     cache_service = CacheService()
     ga4_service = GA4Service(user_integration_repo, cache_service)
+    qr_code_repo = QRCodeRepository(session)
 
     return CampaignAnalyticsService(
-        campaign_repo, scan_log_repo, user_integration_repo, ga4_service, cache_service
+        campaign_repo, scan_log_repo, user_integration_repo, ga4_service, cache_service, qr_code_repo
     )
 
 
