@@ -70,7 +70,7 @@ class Settings(BaseSettings):
         alias="GOOGLE_REDIRECT_URI",
     )
 
-    queue_backend: str = Field(default="memory", alias="QUEUE_BACKEND")
+    queue_backend: str = Field(default="auto", alias="QUEUE_BACKEND")
     queue_url: Optional[str] = Field(default=None, alias="QUEUE_URL")
     dlq_name: str = Field(default="scan_logs_dlq", alias="DLQ_NAME")
     scan_log_queue_name: str = Field(
@@ -139,4 +139,3 @@ def get_settings() -> Settings:
     """Return a cached settings instance for dependency injection."""
 
     return Settings()
-

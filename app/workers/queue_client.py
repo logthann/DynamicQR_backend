@@ -9,13 +9,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from redis import asyncio as redis
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from app.core.config import get_settings
+from app.core.config import LOCAL_ENV_NAMES, LOCAL_HOSTNAMES, Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,37 @@ def _deserialize_envelope(raw: str) -> QueueEnvelope:
 _queue_client: QueueClient | None = None
 
 
+def resolve_queue_backend(settings: Settings) -> str:
+    """Resolve effective queue backend from explicit or auto environment config."""
+
+    configured_backend = settings.queue_backend.lower().strip()
+    if configured_backend in {"memory", "redis"}:
+        return configured_backend
+
+    if configured_backend not in {"", "auto"}:
+        raise ValueError(f"Unsupported queue backend '{settings.queue_backend}'")
+
+    app_env = settings.app_env.lower().strip()
+    if app_env in LOCAL_ENV_NAMES:
+        return "memory"
+
+    redis_url = (settings.queue_url or settings.redis_url or "").strip()
+    if _is_non_local_redis_url(redis_url):
+        logger.info("Auto-selected redis queue backend")
+        return "redis"
+
+    return "memory"
+
+
+def _is_non_local_redis_url(redis_url: str) -> bool:
+    if not redis_url:
+        return False
+
+    parsed = urlparse(redis_url)
+    hostname = parsed.hostname
+    return bool(hostname and hostname not in LOCAL_HOSTNAMES)
+
+
 def get_queue_client() -> QueueClient:
     """Return singleton queue client based on configured backend."""
 
@@ -251,7 +283,7 @@ def get_queue_client() -> QueueClient:
         return _queue_client
 
     settings = get_settings()
-    backend = settings.queue_backend.lower().strip()
+    backend = resolve_queue_backend(settings)
 
     if backend == "memory":
         logger.info("Using in-memory queue backend")
@@ -278,4 +310,3 @@ async def close_queue_client() -> None:
     if _queue_client is not None:
         await _queue_client.close()
         _queue_client = None
-
