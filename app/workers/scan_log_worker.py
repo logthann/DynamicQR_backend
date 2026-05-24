@@ -42,11 +42,17 @@ async def process_next_scan_log_message(
 
     message = await client.dequeue(source_queue, timeout_seconds=resolved_timeout)
     if message is None:
+        logger.debug("No scan-log message available in queue '%s'", source_queue)
         return False
 
     try:
         payload = ScanLogEnqueueMessage.model_validate(message.envelope.payload)
     except ValidationError as exc:
+        logger.warning(
+            "Invalid scan-log payload for message id=%s: %s",
+            message.envelope.id,
+            exc,
+        )
         await client.dead_letter(message, reason=f"invalid_payload:{exc.__class__.__name__}")
         return True
 
@@ -54,10 +60,21 @@ async def process_next_scan_log_message(
         async with factory() as session:
             await _insert_scan_log(session, payload)
             await session.commit()
+            logger.info(
+                "Persisted scan-log message id=%s qr_id=%s",
+                message.envelope.id,
+                payload.qr_id,
+            )
     except Exception as exc:
         logger.exception("Failed to persist scan log message '%s'", message.envelope.id)
         current_attempt = _get_retry_attempt(message.envelope.payload)
         if current_attempt < resolved_max_retries:
+            logger.warning(
+                "Retrying scan-log message id=%s (attempt %d -> %d)",
+                message.envelope.id,
+                current_attempt,
+                current_attempt + 1,
+            )
             await client.enqueue(
                 source_queue,
                 _with_retry_attempt(message.envelope.payload, current_attempt + 1),
@@ -65,6 +82,11 @@ async def process_next_scan_log_message(
             await client.ack(message)
             return True
 
+        logger.error(
+            "Dead-lettering scan-log message id=%s after %d attempts",
+            message.envelope.id,
+            current_attempt,
+        )
         await client.dead_letter(
             message,
             reason=f"db_write_failed:{exc.__class__.__name__}:retry_exhausted",
@@ -72,6 +94,7 @@ async def process_next_scan_log_message(
         return True
 
     await client.ack(message)
+    logger.debug("Acknowledged scan-log message id=%s", message.envelope.id)
     return True
 
 

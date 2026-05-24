@@ -5,6 +5,9 @@ from __future__ import annotations
 from app.core.config import get_settings
 from app.schemas.redirect import RedirectScanMetadata, ScanLogEnqueueMessage
 from app.workers.queue_client import QueueClient, get_queue_client
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def enqueue_scan_log(
@@ -25,7 +28,15 @@ async def enqueue_scan_log(
     ).model_dump(mode="json")
 
     try:
-        return await client.enqueue(destination_queue, payload)
+        message_id = await client.enqueue(destination_queue, payload)
+        logger.info(
+            "Enqueued scan-log message id=%s to queue=%s qr_id=%s",
+            message_id,
+            destination_queue,
+            payload.get("qr_id"),
+        )
+        return message_id
     except Exception as exc:  # pragma: no cover - tested via stub raising RuntimeError
+        logger.exception("Failed to enqueue scan log to %s", destination_queue)
         raise RuntimeError("Failed to enqueue scan log message") from exc
 

@@ -86,6 +86,7 @@ class InMemoryQueueClient(QueueClient):
         )
         raw = _serialize_envelope(envelope)
         await self._queue(queue_name).put(raw)
+        logger.debug("InMemoryQueue: enqueued message id=%s queue=%s", envelope.id, queue_name)
         return envelope.id
 
     async def dequeue(self, queue_name: str, timeout_seconds: int = 1) -> DequeuedMessage | None:
@@ -158,6 +159,7 @@ class RedisQueueClient(QueueClient):
         except RedisError as exc:
             raise RuntimeError(f"Failed to enqueue message into '{queue_name}'") from exc
 
+        logger.debug("RedisQueue: enqueued message id=%s queue=%s", envelope.id, queue_name)
         return envelope.id
 
     async def dequeue(self, queue_name: str, timeout_seconds: int = 1) -> DequeuedMessage | None:

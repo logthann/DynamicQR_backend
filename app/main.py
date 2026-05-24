@@ -82,13 +82,23 @@ def create_application() -> FastAPI:
     async def _start_embedded_scan_worker_if_needed() -> None:
         logger.info("Application startup hook running")
         queue_backend = settings.queue_backend.lower().strip()
-        if settings.app_env != "local" or queue_backend != "memory":
+        # Only start an embedded worker when the configured backend is the in-memory
+        # implementation. In production this is discouraged, but for single-instance
+        # deployments (e.g. a single Render web instance) it is a pragmatic shortcut.
+        if queue_backend != "memory":
             return
 
-        # In-memory queue is process-local, so local dev needs same-process consumer.
+        if settings.app_env != "local":
+            logger.warning(
+                "QUEUE_BACKEND=memory and APP_ENV=%s: starting embedded worker in non-local environment. "
+                "This is not durable or scalable — consider using a Redis-backed queue and a separate worker.",
+                settings.app_env,
+            )
+
+        # In-memory queue is process-local, so same-process consumer is required.
         task = asyncio.create_task(run_scan_log_worker(poll_interval_seconds=0.1))
         app.state.scan_worker_task = task
-        logger.info("Started embedded scan worker for local memory queue")
+        logger.info("Started embedded scan worker for memory queue (process-local)")
 
     @app.on_event("shutdown")
     async def _stop_embedded_scan_worker_if_running() -> None:

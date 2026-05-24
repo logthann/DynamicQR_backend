@@ -29,7 +29,10 @@ async def run_scan_log_worker(
             return
 
         handled = await process_once()
-        if not handled:
+        if handled:
+            logger.debug("Processed a scan-log message")
+        else:
+            logger.debug("No message handled, sleeping for %s seconds", poll_interval_seconds)
             await asyncio.sleep(poll_interval_seconds)
 
 
