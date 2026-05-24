@@ -244,7 +244,12 @@ _queue_client: QueueClient | None = None
 
 
 def resolve_queue_backend(settings: Settings) -> str:
-    """Resolve effective queue backend from explicit or auto environment config."""
+    """Resolve queue backend based on configuration and environment.
+
+    Explicit `memory`/`redis` values are honored directly. For `auto` (or empty),
+    non-local environments use Redis only when QUEUE_URL/REDIS_URL targets a
+    non-local host; otherwise the backend falls back to in-memory.
+    """
 
     configured_backend = settings.queue_backend.lower().strip()
     if configured_backend in {"memory", "redis"}:

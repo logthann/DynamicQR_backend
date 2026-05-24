@@ -50,7 +50,18 @@ def test_resolve_queue_backend_prefers_explicit_value() -> None:
     assert resolve_queue_backend(settings) == "redis"
 
 
-def test_resolve_queue_backend_auto_uses_redis_on_non_local_with_remote_redis() -> None:
+def test_resolve_queue_backend_prefers_explicit_memory_value() -> None:
+    settings = SimpleNamespace(
+        queue_backend="memory",
+        app_env="production",
+        queue_url="redis://red-customer-host:6379/0",
+        redis_url="redis://red-customer-host:6379/0",
+    )
+
+    assert resolve_queue_backend(settings) == "memory"
+
+
+def test_resolve_queue_backend_auto_selects_redis_for_remote_deployment() -> None:
     settings = SimpleNamespace(
         queue_backend="auto",
         app_env="production",
