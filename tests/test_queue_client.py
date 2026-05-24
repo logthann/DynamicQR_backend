@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from app.workers.queue_client import InMemoryQueueClient
+from types import SimpleNamespace
+
+from app.workers.queue_client import InMemoryQueueClient, resolve_queue_backend
 
 
 async def test_inmemory_queue_roundtrip_ack() -> None:
@@ -36,3 +38,46 @@ async def test_inmemory_queue_dead_letter() -> None:
 
     await client.close()
 
+
+def test_resolve_queue_backend_prefers_explicit_value() -> None:
+    settings = SimpleNamespace(
+        queue_backend="redis",
+        app_env="local",
+        queue_url=None,
+        redis_url="redis://localhost:6379/0",
+    )
+
+    assert resolve_queue_backend(settings) == "redis"
+
+
+def test_resolve_queue_backend_prefers_explicit_memory_value() -> None:
+    settings = SimpleNamespace(
+        queue_backend="memory",
+        app_env="production",
+        queue_url="redis://red-customer-host:6379/0",
+        redis_url="redis://red-customer-host:6379/0",
+    )
+
+    assert resolve_queue_backend(settings) == "memory"
+
+
+def test_resolve_queue_backend_auto_selects_redis_for_remote_deployment() -> None:
+    settings = SimpleNamespace(
+        queue_backend="auto",
+        app_env="production",
+        queue_url="redis://red-customer-host:6379/0",
+        redis_url="redis://localhost:6379/0",
+    )
+
+    assert resolve_queue_backend(settings) == "redis"
+
+
+def test_resolve_queue_backend_auto_falls_back_to_memory_without_remote_redis() -> None:
+    settings = SimpleNamespace(
+        queue_backend="auto",
+        app_env="production",
+        queue_url=None,
+        redis_url="redis://localhost:6379/0",
+    )
+
+    assert resolve_queue_backend(settings) == "memory"

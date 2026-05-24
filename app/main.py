@@ -17,6 +17,7 @@ from app.api.v1.tracking import router as tracking_router
 from app.api.v1.users import router as users_router
 from app.core.config import get_settings
 from app.workers.dev_scan_worker import run_scan_log_worker
+from app.workers.queue_client import resolve_queue_backend
 
 # Sanity check: if this line never appears, the process entrypoint/console wiring is wrong.
 print("!!! BACKEND BOOTSTRAP COMPLETE !!!", flush=True)
@@ -81,7 +82,7 @@ def create_application() -> FastAPI:
     @app.on_event("startup")
     async def _start_embedded_scan_worker_if_needed() -> None:
         logger.info("Application startup hook running")
-        queue_backend = settings.queue_backend.lower().strip()
+        queue_backend = resolve_queue_backend(settings)
         if settings.app_env != "local" or queue_backend != "memory":
             return
 
@@ -104,4 +105,3 @@ def create_application() -> FastAPI:
 
 
 app = create_application()
-
