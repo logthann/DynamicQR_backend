@@ -45,6 +45,12 @@ async def process_next_scan_log_message(
         logger.debug("No scan-log message available in queue '%s'", source_queue)
         return False
 
+    logger.info(
+        "[QUEUE DEBUG] Dequeued scan-log message id=%s from queue=%s",
+        message.envelope.id,
+        source_queue,
+    )
+
     try:
         payload = ScanLogEnqueueMessage.model_validate(message.envelope.payload)
     except ValidationError as exc:
@@ -62,6 +68,11 @@ async def process_next_scan_log_message(
             await session.commit()
             logger.info(
                 "Persisted scan-log message id=%s qr_id=%s",
+                message.envelope.id,
+                payload.qr_id,
+            )
+            logger.info(
+                "[QUEUE DEBUG] Worker persisted message id=%s qr_id=%s",
                 message.envelope.id,
                 payload.qr_id,
             )
@@ -95,6 +106,7 @@ async def process_next_scan_log_message(
 
     await client.ack(message)
     logger.debug("Acknowledged scan-log message id=%s", message.envelope.id)
+    logger.info("[QUEUE DEBUG] Acknowledged scan-log message id=%s", message.envelope.id)
     return True
 
 

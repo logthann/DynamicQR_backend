@@ -78,6 +78,17 @@ def create_application() -> FastAPI:
     app.include_router(tracking_router)
     app.include_router(users_router)
 
+    async def _run_embedded_scan_worker() -> None:
+        logger.info("Embedded scan worker task starting")
+        try:
+            await run_scan_log_worker(poll_interval_seconds=0.1)
+        except asyncio.CancelledError:
+            logger.info("Embedded scan worker task cancelled")
+            raise
+        except Exception:
+            logger.exception("Embedded scan worker task crashed")
+            raise
+
     @app.on_event("startup")
     async def _start_embedded_scan_worker_if_needed() -> None:
         logger.info("Application startup hook running")
@@ -96,7 +107,7 @@ def create_application() -> FastAPI:
             )
 
         # In-memory queue is process-local, so same-process consumer is required.
-        task = asyncio.create_task(run_scan_log_worker(poll_interval_seconds=0.1))
+        task = asyncio.create_task(_run_embedded_scan_worker())
         app.state.scan_worker_task = task
         logger.info("Started embedded scan worker for memory queue (process-local)")
 

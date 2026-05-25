@@ -69,7 +69,17 @@ async def redirect_by_short_code(
 
     scan_metadata = extract_scan_metadata(request)
     try:
+        logger.info(
+            "[QUEUE DEBUG] Enqueue requested for short_code=%s qr_id=%s",
+            short_code,
+            qr_code.id,
+        )
         await enqueue_scan_log(qr_id=qr_code.id, scan_metadata=scan_metadata)
+        logger.info(
+            "[QUEUE DEBUG] Enqueue completed for short_code=%s qr_id=%s",
+            short_code,
+            qr_code.id,
+        )
     except RuntimeError:
         # Keep redirect UX resilient, but log enqueue failures for ops visibility.
         logger.exception("Failed to enqueue scan log for qr_id=%s", qr_code.id)

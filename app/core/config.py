@@ -44,13 +44,6 @@ class Settings(BaseSettings):
     service_jwt_issuer: str = Field(default="dynamicqr-internal", alias="SERVICE_JWT_ISSUER")
     service_jwt_audience: str = Field(default="dynamicqr-tracking", alias="SERVICE_JWT_AUDIENCE")
 
-    redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
-    redis_enabled: bool = Field(default=True, alias="REDIS_ENABLED")
-    redis_short_code_ttl_seconds: int = Field(
-        default=300,
-        alias="REDIS_SHORT_CODE_TTL_SECONDS",
-    )
-
     google_analytics_measurement_id: Optional[str] = Field(
         default=None,
         alias="GOOGLE_ANALYTICS_MEASUREMENT_ID",
