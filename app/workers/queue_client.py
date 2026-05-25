@@ -83,6 +83,8 @@ class InMemoryQueueClient(QueueClient):
         raw = _serialize_envelope(envelope)
         await self._queue(queue_name).put(raw)
         logger.debug("InMemoryQueue: enqueued message id=%s queue=%s", envelope.id, queue_name)
+        # Also print so stdout log stream captures enqueue events on platforms like Render
+        print(f"[QUEUE DEBUG] InMemoryQueue: enqueued message id={envelope.id} queue={queue_name}", flush=True)
         return envelope.id
 
     async def dequeue(self, queue_name: str, timeout_seconds: int = 1) -> DequeuedMessage | None:
@@ -95,6 +97,7 @@ class InMemoryQueueClient(QueueClient):
 
         envelope = _deserialize_envelope(raw)
         self._processing_map(queue_name)[envelope.id] = raw
+        print(f"[QUEUE DEBUG] InMemoryQueue: dequeued message id={envelope.id} queue={queue_name}", flush=True)
         return DequeuedMessage(envelope=envelope, raw=raw, queue_name=queue_name)
 
     async def ack(self, message: DequeuedMessage) -> None:
@@ -167,6 +170,8 @@ def get_queue_client() -> QueueClient:
         )
     else:
         logger.info("Using in-memory queue backend")
+    # Mirror to stdout for Render visibility
+    print(f"[QUEUE DEBUG] Selected queue backend: {settings.queue_backend}", flush=True)
 
     _queue_client = InMemoryQueueClient()
     return _queue_client

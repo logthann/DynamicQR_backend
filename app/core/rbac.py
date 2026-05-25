@@ -66,7 +66,6 @@ def ensure_scope_access(
     principal: Principal,
     *,
     owner_user_id: int,
-    owner_company_name: str | None,
 ) -> None:
     """Enforce tenant/ownership boundaries for a target resource.
 

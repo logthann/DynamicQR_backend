@@ -74,12 +74,15 @@ async def redirect_by_short_code(
             short_code,
             qr_code.id,
         )
+        # Also print to stdout so Render log stream definitely captures the event
+        print(f"[QUEUE DEBUG] Enqueue requested for short_code={short_code} qr_id={qr_code.id}", flush=True)
         await enqueue_scan_log(qr_id=qr_code.id, scan_metadata=scan_metadata)
         logger.info(
             "[QUEUE DEBUG] Enqueue completed for short_code=%s qr_id=%s",
             short_code,
             qr_code.id,
         )
+        print(f"[QUEUE DEBUG] Enqueue completed for short_code={short_code} qr_id={qr_code.id}", flush=True)
     except RuntimeError:
         # Keep redirect UX resilient, but log enqueue failures for ops visibility.
         logger.exception("Failed to enqueue scan log for qr_id=%s", qr_code.id)

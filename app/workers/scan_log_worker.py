@@ -43,6 +43,8 @@ async def process_next_scan_log_message(
     message = await client.dequeue(source_queue, timeout_seconds=resolved_timeout)
     if message is None:
         logger.debug("No scan-log message available in queue '%s'", source_queue)
+        # Print to stdout so Render logs show polling activity when queue is empty
+        print(f"[QUEUE DEBUG] No scan-log message available in queue '{source_queue}'", flush=True)
         return False
 
     logger.info(
@@ -50,6 +52,7 @@ async def process_next_scan_log_message(
         message.envelope.id,
         source_queue,
     )
+    print(f"[QUEUE DEBUG] Dequeued scan-log message id={message.envelope.id} from queue={source_queue}", flush=True)
 
     try:
         payload = ScanLogEnqueueMessage.model_validate(message.envelope.payload)
@@ -76,6 +79,7 @@ async def process_next_scan_log_message(
                 message.envelope.id,
                 payload.qr_id,
             )
+            print(f"[QUEUE DEBUG] Worker persisted message id={message.envelope.id} qr_id={payload.qr_id}", flush=True)
     except Exception as exc:
         logger.exception("Failed to persist scan log message '%s'", message.envelope.id)
         current_attempt = _get_retry_attempt(message.envelope.payload)
@@ -107,6 +111,7 @@ async def process_next_scan_log_message(
     await client.ack(message)
     logger.debug("Acknowledged scan-log message id=%s", message.envelope.id)
     logger.info("[QUEUE DEBUG] Acknowledged scan-log message id=%s", message.envelope.id)
+    print(f"[QUEUE DEBUG] Acknowledged scan-log message id={message.envelope.id}", flush=True)
     return True
 
 
