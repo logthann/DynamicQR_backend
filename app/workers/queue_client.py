@@ -1,4 +1,4 @@
-"""Durable queue client interfaces and backend implementations."""
+"""Queue client interfaces and in-memory backend for demo/test usage."""
 
 from __future__ import annotations
 
@@ -10,10 +10,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
-
-from redis import asyncio as redis
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
 
 from app.core.config import get_settings
 
@@ -123,95 +119,6 @@ class InMemoryQueueClient(QueueClient):
         self._dead_letters.clear()
 
 
-class RedisQueueClient(QueueClient):
-    """Redis list-backed queue with processing and dead-letter support."""
-
-    def __init__(self, redis_url: str, dead_letter_queue_name: str) -> None:
-        self._redis: Redis = redis.from_url(
-            redis_url,
-            decode_responses=True,
-            encoding="utf-8",
-        )
-        self._dead_letter_queue_name = dead_letter_queue_name
-
-    @staticmethod
-    def _queue_key(queue_name: str) -> str:
-        return f"queue:{queue_name}"
-
-    @staticmethod
-    def _processing_key(queue_name: str) -> str:
-        return f"queue:{queue_name}:processing"
-
-    def _dead_letter_key(self) -> str:
-        return self._queue_key(self._dead_letter_queue_name)
-
-    async def enqueue(self, queue_name: str, payload: dict[str, Any]) -> str:
-        envelope = QueueEnvelope(
-            id=str(uuid4()),
-            payload=payload,
-            attempts=0,
-            enqueued_at=datetime.now(UTC).isoformat(),
-        )
-        raw = _serialize_envelope(envelope)
-
-        try:
-            await self._redis.lpush(self._queue_key(queue_name), raw)
-        except RedisError as exc:
-            raise RuntimeError(f"Failed to enqueue message into '{queue_name}'") from exc
-
-        logger.debug("RedisQueue: enqueued message id=%s queue=%s", envelope.id, queue_name)
-        return envelope.id
-
-    async def dequeue(self, queue_name: str, timeout_seconds: int = 1) -> DequeuedMessage | None:
-        source_key = self._queue_key(queue_name)
-        processing_key = self._processing_key(queue_name)
-
-        try:
-            raw = await self._redis.brpoplpush(source_key, processing_key, timeout_seconds)
-        except RedisError as exc:
-            raise RuntimeError(f"Failed to dequeue message from '{queue_name}'") from exc
-
-        if not raw:
-            return None
-
-        envelope = _deserialize_envelope(raw)
-        return DequeuedMessage(envelope=envelope, raw=raw, queue_name=queue_name)
-
-    async def ack(self, message: DequeuedMessage) -> None:
-        try:
-            await self._redis.lrem(
-                self._processing_key(message.queue_name),
-                1,
-                message.raw,
-            )
-        except RedisError as exc:
-            raise RuntimeError(
-                f"Failed to ack message '{message.envelope.id}'",
-            ) from exc
-
-    async def dead_letter(self, message: DequeuedMessage, reason: str) -> None:
-        dead_letter_payload = {
-            "id": message.envelope.id,
-            "payload": message.envelope.payload,
-            "attempts": message.envelope.attempts + 1,
-            "reason": reason,
-            "failed_at": datetime.now(UTC).isoformat(),
-        }
-
-        try:
-            pipe = self._redis.pipeline(transaction=True)
-            pipe.lrem(self._processing_key(message.queue_name), 1, message.raw)
-            pipe.lpush(self._dead_letter_key(), json.dumps(dead_letter_payload))
-            await pipe.execute()
-        except RedisError as exc:
-            raise RuntimeError(
-                f"Failed to dead-letter message '{message.envelope.id}'",
-            ) from exc
-
-    async def close(self) -> None:
-        await self._redis.aclose()
-
-
 def _serialize_envelope(envelope: QueueEnvelope) -> str:
     return json.dumps(
         {
@@ -245,7 +152,7 @@ _queue_client: QueueClient | None = None
 
 
 def get_queue_client() -> QueueClient:
-    """Return singleton queue client based on configured backend."""
+    """Return singleton in-memory queue client."""
 
     global _queue_client
 
@@ -253,23 +160,17 @@ def get_queue_client() -> QueueClient:
         return _queue_client
 
     settings = get_settings()
-    backend = settings.queue_backend.lower().strip()
-
-    if backend == "memory":
-        logger.info("Using in-memory queue backend")
-        _queue_client = InMemoryQueueClient()
-        return _queue_client
-
-    if backend == "redis":
-        redis_url = settings.queue_url or settings.redis_url
-        logger.info("Using redis queue backend")
-        _queue_client = RedisQueueClient(
-            redis_url=redis_url,
-            dead_letter_queue_name=settings.dlq_name,
+    if settings.queue_backend.lower().strip() != "memory":
+        logger.warning(
+            "QUEUE_BACKEND=%s is unsupported in this demo build; falling back to in-memory queue",
+            settings.queue_backend,
         )
-        return _queue_client
+    else:
+        logger.info("Using in-memory queue backend")
 
-    raise ValueError(f"Unsupported queue backend '{settings.queue_backend}'")
+    _queue_client = InMemoryQueueClient()
+    return _queue_client
+
 
 
 async def close_queue_client() -> None:

@@ -1,61 +1,50 @@
-"""Redis cache helpers for QR short-code lookups."""
+"""In-memory cache helpers for QR short-code lookups."""
 
 from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
-
-from redis import asyncio as redis
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
-
-from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 SHORT_CODE_CACHE_PREFIX = "qr:short_code:"
+DEFAULT_SHORT_CODE_CACHE_TTL_SECONDS = 300
 
-_redis_client: Redis | None = None
-_redis_error_logged = False
+_short_code_cache: dict[str, tuple[str, float | None]] = {}
 
 
 def _cache_enabled() -> bool:
-    return bool(get_settings().redis_enabled)
+    return True
 
 
-def _log_redis_unavailable_once(operation: str, short_code: str) -> None:
-    global _redis_error_logged
-    if _redis_error_logged:
-        return
-    logger.warning(
-        "Redis %s failed for short code '%s'. Cache disabled for this process until restart.",
-        operation,
-        short_code,
-    )
-    _redis_error_logged = True
+def _is_expired(expires_at: float | None) -> bool:
+    return expires_at is not None and time.monotonic() >= expires_at
+
+
+def _store_value(cache_key: str, raw_payload: str, ttl_seconds: int | None) -> None:
+    expires_at = None if ttl_seconds is None else time.monotonic() + max(ttl_seconds, 0)
+    _short_code_cache[cache_key] = (raw_payload, expires_at)
+
+
+def _get_value(cache_key: str) -> str | None:
+    cached_entry = _short_code_cache.get(cache_key)
+    if cached_entry is None:
+        return None
+
+    raw_payload, expires_at = cached_entry
+    if _is_expired(expires_at):
+        _short_code_cache.pop(cache_key, None)
+        return None
+
+    return raw_payload
 
 
 def short_code_cache_key(short_code: str) -> str:
-    """Build a stable Redis key for a short code."""
+    """Build a stable cache key for a short code."""
 
     return f"{SHORT_CODE_CACHE_PREFIX}{short_code}"
-
-
-def get_redis_client() -> Redis:
-    """Return a singleton Redis async client."""
-
-    global _redis_client
-
-    if _redis_client is None:
-        settings = get_settings()
-        _redis_client = redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            encoding="utf-8",
-        )
-
-    return _redis_client
 
 
 async def get_cached_short_code(short_code: str) -> dict[str, Any] | None:
@@ -66,11 +55,7 @@ async def get_cached_short_code(short_code: str) -> dict[str, Any] | None:
 
     cache_key = short_code_cache_key(short_code)
 
-    try:
-        payload = await get_redis_client().get(cache_key)
-    except RedisError:
-        _log_redis_unavailable_once("get", short_code)
-        return None
+    payload = _get_value(cache_key)
 
     if not payload:
         return None
@@ -95,15 +80,14 @@ async def set_cached_short_code(
         return False
 
     cache_key = short_code_cache_key(short_code)
-    settings = get_settings()
-    resolved_ttl = ttl_seconds or settings.redis_short_code_ttl_seconds
+    resolved_ttl = ttl_seconds or DEFAULT_SHORT_CODE_CACHE_TTL_SECONDS
 
     try:
         raw_payload = json.dumps(payload)
-        await get_redis_client().set(cache_key, raw_payload, ex=resolved_ttl)
+        _store_value(cache_key, raw_payload, resolved_ttl)
         return True
-    except (RedisError, TypeError, ValueError):
-        _log_redis_unavailable_once("set", short_code)
+    except (TypeError, ValueError):
+        logger.warning("Failed to cache short code '%s' in memory", short_code)
         return False
 
 
@@ -114,19 +98,11 @@ async def invalidate_short_code_cache(short_code: str) -> None:
         return
 
     cache_key = short_code_cache_key(short_code)
-
-    try:
-        await get_redis_client().delete(cache_key)
-    except RedisError:
-        _log_redis_unavailable_once("delete", short_code)
+    _short_code_cache.pop(cache_key, None)
 
 
-async def close_redis_client() -> None:
-    """Close and reset the singleton Redis client."""
+async def clear_short_code_cache_store() -> None:
+    """Clear the in-memory short-code cache store."""
 
-    global _redis_client
-
-    if _redis_client is not None:
-        await _redis_client.aclose()
-        _redis_client = None
+    _short_code_cache.clear()
 

@@ -102,7 +102,7 @@ def create_application() -> FastAPI:
         if settings.app_env != "local":
             logger.warning(
                 "QUEUE_BACKEND=memory and APP_ENV=%s: starting embedded worker in non-local environment. "
-                "This is not durable or scalable — consider using a Redis-backed queue and a separate worker.",
+                "This is not durable or scalable — consider using a persistent queue and a separate worker.",
                 settings.app_env,
             )
 

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(_PROJECT_ROOT / ".env"),
         case_sensitive=True,
+        extra="ignore",
     )
 
     app_env: str = Field(default="local", alias="APP_ENV")
@@ -64,8 +65,6 @@ class Settings(BaseSettings):
     )
 
     queue_backend: str = Field(default="memory", alias="QUEUE_BACKEND")
-    queue_url: Optional[str] = Field(default=None, alias="QUEUE_URL")
-    dlq_name: str = Field(default="scan_logs_dlq", alias="DLQ_NAME")
     scan_log_queue_name: str = Field(
         default="scan_logs",
         alias="SCAN_LOG_QUEUE_NAME",
