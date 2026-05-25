@@ -19,7 +19,6 @@ cryptography>=44.0,<46.0
 
 # Integrations and caching
 httpx>=0.28,<1.0
-redis>=5.2,<6.0
 
 # OAuth helpers and environment loading
 authlib>=1.4,<2.0
