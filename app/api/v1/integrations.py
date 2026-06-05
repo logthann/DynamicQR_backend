@@ -309,6 +309,7 @@ async def connect_provider(
     """Build provider authorization URL for OAuth connect flow."""
 
     try:
+        # Ignore redirect_uri from payload for security, always use from service configuration
         return await service.build_connect_url(principal, payload)
     except IntegrationServiceError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -373,7 +374,7 @@ async def callback_provider_get(
             provider_name=provider_name,
             code=code,
             state=state,
-            redirect_uri=redirect_uri,
+            redirect_uri=redirect_uri, # Will be ignored in service.handle_callback
         )
         return await service.handle_callback(principal, payload)
     except IntegrationServiceError as exc:
@@ -419,4 +420,3 @@ async def revoke_provider(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration not found")
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-

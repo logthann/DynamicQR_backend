@@ -111,7 +111,9 @@ class IntegrationService:
 
         self._ensure_google_oauth_credentials()
         provider_config = self._get_provider_config(payload.provider_name)
-        redirect_uri = str(payload.redirect_uri) if payload.redirect_uri else self.default_redirect_uri
+        
+        # Security: Always use the server-configured redirect URI. Ignore any value from the client.
+        redirect_uri = self.default_redirect_uri
         if not redirect_uri:
             raise IntegrationServiceError("Missing redirect URI for OAuth connect flow")
 
@@ -185,7 +187,8 @@ class IntegrationService:
                 role=principal.role,
             )
 
-        redirect_uri = str(payload.redirect_uri) if payload.redirect_uri else self.default_redirect_uri
+        # Security: Always use the server-configured redirect URI. Ignore any value from the client.
+        redirect_uri = self.default_redirect_uri
         if not redirect_uri:
             raise IntegrationServiceError("Missing redirect URI for OAuth callback flow")
 
@@ -696,4 +699,3 @@ class IntegrationService:
         missing = sorted(required - set(granted_scopes))
         if missing:
             raise IntegrationServiceError(f"Missing required OAuth scopes: {missing}")
-
