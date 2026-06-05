@@ -53,8 +53,8 @@ def create_access_token(
 
     return jwt.encode(
         payload,
-        settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
+        settings.jwt_secret, #tạo signature
+        algorithm=settings.jwt_algorithm, #tạo header
     )
 
 
@@ -111,5 +111,4 @@ def decode_service_token(token: str) -> dict[str, Any]:
     if payload.get("typ") != "service":
         raise jwt.InvalidTokenError("Token type is not service")
     return payload
-
 

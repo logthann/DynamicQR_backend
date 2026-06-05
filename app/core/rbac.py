@@ -66,13 +66,20 @@ def ensure_scope_access(
     principal: Principal,
     *,
     owner_user_id: int,
+    owner_company_name: str | None = None,
 ) -> None:
     """Enforce tenant/ownership boundaries for a target resource.
 
     Scope rules:
     - admin: full access
     - employee: only resources they created (owner_user_id)
+
+    Notes:
+    - owner_company_name is retained as a backward-compatible no-op while
+      company-based scoping is removed.
     """
+
+    _ = owner_company_name
 
     if principal.role == "admin":
         return
@@ -85,7 +92,6 @@ def scope_filter(
     principal: Principal,
     *,
     owner_field: str = "user_id",
-    company_field: str = "company_name",
 ) -> dict[str, Any]:
     """Return a repository-level filter that applies principal scope by role."""
 

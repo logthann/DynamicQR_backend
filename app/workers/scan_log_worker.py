@@ -43,8 +43,6 @@ async def process_next_scan_log_message(
     message = await client.dequeue(source_queue, timeout_seconds=resolved_timeout)
     if message is None:
         logger.debug("No scan-log message available in queue '%s'", source_queue)
-        # Print to stdout so Render logs show polling activity when queue is empty
-        print(f"[QUEUE DEBUG] No scan-log message available in queue '{source_queue}'", flush=True)
         return False
 
     logger.info(

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 import re
 
 from app.core.rbac import Principal, RBACError, ensure_scope_access
 from app.repositories.campaigns import CampaignRepository
 from app.schemas.campaign import CampaignCreate, CampaignRead, CampaignUpdate, GATrackingType, CampaignCreatorInfo
 
-CompanyNameResolver = Callable[[int], Awaitable[str | None]]
 GA_MEASUREMENT_ID_PATTERN = re.compile(r"^G-[A-Z0-9]{4,20}$")
 
 
@@ -23,11 +21,8 @@ class CampaignService:
     def __init__(
         self,
         repository: CampaignRepository,
-        *,
-        company_name_resolver: CompanyNameResolver | None = None,
     ) -> None:
         self.repository = repository
-        self.company_name_resolver = company_name_resolver
 
     async def create_campaign(
         self,
@@ -35,7 +30,6 @@ class CampaignService:
         payload: CampaignCreate,
         *,
         owner_user_id: int | None = None,
-        owner_company_name: str | None = None,
     ) -> CampaignRead:
         """Create a campaign after validating principal ownership scope."""
 
@@ -50,14 +44,9 @@ class CampaignService:
             campaign.creator = creator_info
             return campaign
 
-        company_name = await self._resolve_owner_company_name(
-            target_owner,
-            fallback=owner_company_name,
-        )
         ensure_scope_access(
             principal,
             owner_user_id=target_owner,
-            owner_company_name=company_name,
         )
         return await self.repository.create(target_owner, normalized_payload)
 
@@ -74,11 +63,9 @@ class CampaignService:
         if campaign is None:
             return None
 
-        owner_company_name = await self._resolve_owner_company_name(campaign.user_id)
         ensure_scope_access(
             principal,
             owner_user_id=campaign.user_id,
-            owner_company_name=owner_company_name,
         )
 
         # Enrich campaign with creator info for admin users
@@ -93,7 +80,6 @@ class CampaignService:
         principal: Principal,
         *,
         owner_user_id: int | None,
-        owner_company_name: str | None = None,
         include_deleted: bool = False,
         limit: int = 100,
         offset: int = 0,
@@ -113,14 +99,9 @@ class CampaignService:
             )
         else:
             target_owner = owner_user_id if owner_user_id is not None else principal.user_id
-            resolved_company_name = await self._resolve_owner_company_name(
-                target_owner,
-                fallback=owner_company_name,
-            )
             ensure_scope_access(
                 principal,
                 owner_user_id=target_owner,
-                owner_company_name=resolved_company_name,
             )
             campaigns = await self.repository.list_by_user(
                 target_owner,
@@ -149,11 +130,9 @@ class CampaignService:
         if existing is None:
             return None
 
-        owner_company_name = await self._resolve_owner_company_name(existing.user_id)
         ensure_scope_access(
             principal,
             owner_user_id=existing.user_id,
-            owner_company_name=owner_company_name,
         )
         normalized_payload = self._normalize_campaign_update_payload(existing, payload)
         campaign = await self.repository.update(campaign_id, normalized_payload)
@@ -252,29 +231,11 @@ class CampaignService:
         if existing is None:
             return False
 
-        owner_company_name = await self._resolve_owner_company_name(existing.user_id)
         ensure_scope_access(
             principal,
             owner_user_id=existing.user_id,
-            owner_company_name=owner_company_name,
         )
         return await self.repository.soft_delete(campaign_id)
-
-    async def _resolve_owner_company_name(
-        self,
-        owner_user_id: int,
-        *,
-        fallback: str | None = None,
-    ) -> str | None:
-        """Resolve owner company name for agency-scope checks when available."""
-
-        if fallback is not None:
-            return fallback
-
-        if self.company_name_resolver is None:
-            return None
-
-        return await self.company_name_resolver(owner_user_id)
 
     async def _resolve_creator_info(self, user_id: int) -> CampaignCreatorInfo | None:
         """Resolve creator information (username and email) from repository."""
@@ -287,9 +248,14 @@ class CampaignService:
             if creator_data is None:
                 return None
 
+            username = creator_data.get("username")
+            email = creator_data.get("email")
+            if not isinstance(username, str) or not isinstance(email, str):
+                return None
+
             return CampaignCreatorInfo(
-                username=creator_data.get("username"),
-                email=creator_data.get("email"),
+                username=username,
+                email=email,
             )
         except (AttributeError, TypeError, Exception):
             # Handle cases where get_creator_info is mocked or unavailable
@@ -299,22 +265,19 @@ class CampaignService:
 def require_campaign_access(
     principal: Principal,
     campaign: CampaignRead,
-    *,
-    owner_company_name: str | None,
 ) -> None:
     """Standalone access guard that can be reused in route-level compositions."""
+
 
     ensure_scope_access(
         principal,
         owner_user_id=campaign.user_id,
-        owner_company_name=owner_company_name,
     )
 
 
 __all__ = [
     "CampaignService",
     "CampaignValidationError",
-    "CompanyNameResolver",
     "RBACError",
     "require_campaign_access",
 ]

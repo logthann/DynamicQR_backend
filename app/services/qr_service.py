@@ -18,7 +18,6 @@ from app.schemas.qr_code import (
 )
 from app.services.short_code_service import ExistsChecker, generate_unique_base62_code
 
-CompanyNameResolver = Callable[[int], Awaitable[str | None]]
 UniqueCodeGenerator = Callable[[ExistsChecker], Awaitable[str]]
 EventQRHandler = Callable[[int, QRCodeCreate], Awaitable[None]]
 GA_MEASUREMENT_ID_PATTERN = re.compile(r"^G-[A-Z0-9]{4,20}$")
@@ -35,12 +34,10 @@ class QRService:
         self,
         repository: QRCodeRepository,
         *,
-        company_name_resolver: CompanyNameResolver | None = None,
         short_code_generator: UniqueCodeGenerator | None = None,
         event_qr_handler: EventQRHandler | None = None,
     ) -> None:
         self.repository = repository
-        self.company_name_resolver = company_name_resolver
         self.short_code_generator = short_code_generator or self._default_short_code_generator
         self.event_qr_handler = event_qr_handler
 
@@ -50,21 +47,15 @@ class QRService:
         payload: QRCodeCreate,
         *,
         owner_user_id: int | None = None,
-        owner_company_name: str | None = None,
     ) -> QRCodeRead:
         """Create one QR code and trigger event hook for event-type payloads."""
 
         target_owner = owner_user_id if owner_user_id is not None else principal.user_id
 
         if principal.role != "admin":
-            resolved_company_name = await self._resolve_owner_company_name(
-                target_owner,
-                fallback=owner_company_name,
-            )
             ensure_scope_access(
                 principal,
                 owner_user_id=target_owner,
-                owner_company_name=resolved_company_name,
             )
 
         if payload.use_campaign_defaults and payload.campaign_id is None:
@@ -101,11 +92,9 @@ class QRService:
         if qr_code is None:
             return None
 
-        owner_company_name = await self._resolve_owner_company_name(qr_code.user_id)
         ensure_scope_access(
             principal,
             owner_user_id=qr_code.user_id,
-            owner_company_name=owner_company_name,
         )
         return qr_code
 
@@ -114,7 +103,6 @@ class QRService:
         principal: Principal,
         *,
         owner_user_id: int,
-        owner_company_name: str | None = None,
         campaign_id: int | None = None,
         status: QRCodeStatus | None = None,
         include_deleted: bool = False,
@@ -123,14 +111,9 @@ class QRService:
     ) -> list[QRCodeListItem]:
         """List QR codes for one owner when principal can access the ownership scope."""
 
-        resolved_company_name = await self._resolve_owner_company_name(
-            owner_user_id,
-            fallback=owner_company_name,
-        )
         ensure_scope_access(
             principal,
             owner_user_id=owner_user_id,
-            owner_company_name=resolved_company_name,
         )
 
         if campaign_id is not None:
@@ -161,11 +144,9 @@ class QRService:
         if existing is None:
             return None
 
-        owner_company_name = await self._resolve_owner_company_name(existing.user_id)
         ensure_scope_access(
             principal,
             owner_user_id=existing.user_id,
-            owner_company_name=owner_company_name,
         )
 
         campaign_context: dict[str, str | None] | None = None
@@ -196,11 +177,9 @@ class QRService:
         if existing is None:
             return None
 
-        owner_company_name = await self._resolve_owner_company_name(existing.user_id)
         ensure_scope_access(
             principal,
             owner_user_id=existing.user_id,
-            owner_company_name=owner_company_name,
         )
         return await self.repository.set_status(qr_id, status)
 
@@ -211,11 +190,9 @@ class QRService:
         if existing is None:
             return False
 
-        owner_company_name = await self._resolve_owner_company_name(existing.user_id)
         ensure_scope_access(
             principal,
             owner_user_id=existing.user_id,
-            owner_company_name=owner_company_name,
         )
         return await self.repository.soft_delete(qr_id)
 
@@ -229,21 +206,6 @@ class QRService:
 
         return await generate_unique_base62_code(exists_checker)
 
-    async def _resolve_owner_company_name(
-        self,
-        owner_user_id: int,
-        *,
-        fallback: str | None = None,
-    ) -> str | None:
-        """Resolve owner company for agency-scope checks if resolver is available."""
-
-        if fallback is not None:
-            return fallback
-
-        if self.company_name_resolver is None:
-            return None
-
-        return await self.company_name_resolver(owner_user_id)
 
     async def _ensure_campaign_in_owner_scope(
         self,
